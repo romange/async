@@ -20,3 +20,4 @@ include(third_party)
 include(internal)
 
 add_subdirectory(base)
+add_subdirectory(util)

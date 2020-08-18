@@ -8,9 +8,13 @@
                 "ABSL_INTERNAL_ENABLE_FORMAT_CHECKER=0"
             ],
             "cppStandard": "c++17",
+            "intelliSenseMode": "gcc-x64",
             "includePath": [
                 "${workspaceFolder}",
                 "${workspaceFolder}/genfiles",
+                "${workspaceFolder}/build-opt/_deps/abseil_cpp-src",
+                "${workspaceFolder}/build-opt/_deps/gflags-build/include",
+                "${workspaceFolder}/build-opt/_deps/glog-build",
                 "${default}"
             ]
         }

@@ -1,4 +1,4 @@
-add_library(base init.cc logging.cc)
+add_library(base arena.cc init.cc logging.cc pthread_utils.cc)
 cxx_link(base glog::glog gflags::gflags atomic rt
          absl::symbolize absl::failure_signal_handler)  # rt for timer_create etc.
 
@@ -7,6 +7,6 @@ add_library(gtest_main_ext gtest_main.cc)
 target_link_libraries(gtest_main_ext gmock base benchmark)
 
 cxx_test(mpmc_bounded_queue_test base LABELS CI)
-
+cxx_test(arena_test base LABELS CI)
 
 
