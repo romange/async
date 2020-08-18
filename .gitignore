@@ -1,0 +1,9 @@
+build/*
+build-*
+.vscode/*.db
+third_party/*
+genfiles/*
+*.sublime-*
+.tags
+!third_party/include/*
+*.pyc
