@@ -198,10 +198,7 @@ endif ()
 
 FetchContent_Declare(
     abseil_cpp
-    GIT_REPOSITORY  https://github.com/abseil/abseil-cpp.git
-    GIT_TAG         d0c433455801e1c1fb6f486f0b447e22f946ab52
-    GIT_PROGRESS    TRUE
-    GIT_SHALLOW     TRUE
+    URL https://github.com/abseil/abseil-cpp/archive/20200225.2.zip
 )
 FetchContent_GetProperties(abseil_cpp)
 if(NOT abseil_cpp_POPULATED)
