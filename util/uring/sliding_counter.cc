@@ -3,8 +3,8 @@
 //
 #include "util/uring/sliding_counter.h"
 
+#include "absl/time/clock.h"
 #include "base/logging.h"
-#include "base/walltime.h"
 
 using namespace std;
 
@@ -13,7 +13,7 @@ namespace uring {
 namespace detail {
 
 uint32_t SlidingCounterTLBase::MoveTsIfNeeded(size_t size, int32_t* dest) const {
-  uint32_t current_sec = base::GetClockMicros<CLOCK_MONOTONIC_COARSE>() / 1000000UL;
+  uint32_t current_sec = time(NULL);
   if (last_ts_ + size <= current_sec) {
     std::fill(dest, dest + size, 0);
   } else {

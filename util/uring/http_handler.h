@@ -7,8 +7,10 @@
 #include <boost/beast/http/serializer.hpp>
 #include <boost/beast/http/write.hpp>
 
+#include <absl/container/flat_hash_map.h>
+
 #include "util/uring/accept_server.h"
-#include "strings/unique_strings.h"
+#include "util/asio_stream_adapter.h"
 #include "util/http/http_common.h"
 
 namespace util {
@@ -54,7 +56,7 @@ class HttpListenerBase : public ListenerInterface {
   HttpListenerBase();
 
   // Returns true if a callback was registered.
-  bool RegisterCb(StringPiece path, RequestCb cb);
+  bool RegisterCb(absl::string_view path, RequestCb cb);
 
   void set_resource_prefix(const char* prefix) { resource_prefix_ = prefix; }
   void set_favicon(const char* favicon) { favicon_ = favicon;}
@@ -65,7 +67,7 @@ class HttpListenerBase : public ListenerInterface {
   struct CbInfo {
     RequestCb cb;
   };
-  StringPieceMap<CbInfo> cb_map_;
+  absl::flat_hash_map<absl::string_view, CbInfo> cb_map_;
 
   const char* favicon_;
   const char* resource_prefix_;

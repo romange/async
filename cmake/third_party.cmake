@@ -247,3 +247,16 @@ add_third_party(
   CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${THIRD_PARTY_LIB_DIR}/uring
   BUILD_IN_SOURCE 1
 )
+
+add_third_party(
+  rapidjson
+  GIT_REPOSITORY https://github.com/Tencent/rapidjson.git
+  GIT_TAG 1a803826f1197b5e30703afe4b9c0e7dd48074f5
+  CMAKE_PASS_FLAGS "-DRAPIDJSON_BUILD_TESTS=OFF -DRAPIDJSON_BUILD_EXAMPLES=OFF \
+                    -DRAPIDJSON_BUILD_DOC=OFF"
+  LIB "none"
+)
+add_library(TRDP::rapidjson INTERFACE IMPORTED)
+add_dependencies(TRDP::rapidjson rapidjson_project)
+set_target_properties(TRDP::rapidjson PROPERTIES
+                      INTERFACE_INCLUDE_DIRECTORIES "${RAPIDJSON_INCLUDE_DIR}")

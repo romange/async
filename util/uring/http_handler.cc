@@ -1,7 +1,6 @@
 // Copyright 2020, Beeri 15.  All rights reserved.
 // Author: Roman Gershman (romange@gmail.com)
 //
-
 #include "util/uring/http_handler.h"
 
 #include <boost/beast/core.hpp>  // for flat_buffer.
@@ -20,7 +19,7 @@ namespace uring {
 namespace {
 
 void FilezHandler(const QueryArgs& args, HttpContext* send) {
-  StringPiece file_name;
+  absl::string_view file_name;
   for (const auto& k_v : args) {
     if (k_v.first == "file") {
       file_name = k_v.second;
@@ -32,7 +31,7 @@ void FilezHandler(const QueryArgs& args, HttpContext* send) {
   }
 
   FileResponse fresp;
-  string fname = strings::AsString(file_name);
+  string fname(file_name);
   auto ec = LoadFileResponse(fname, &fresp);
   if (ec) {
     StringResponse res = MakeStringResponse(h2::status::not_found);
@@ -58,7 +57,7 @@ HttpListenerBase::HttpListenerBase() {
 
 bool HttpListenerBase::HandleRoot(const RequestType& request,
                                   HttpContext* cntx) const {
-  StringPiece target = as_absl(request.target());
+  absl::string_view target = as_absl(request.target());
   if (target == "/favicon.ico") {
     h2::response<h2::string_body> resp =
         MakeStringResponse(h2::status::moved_permanently);
@@ -70,7 +69,7 @@ bool HttpListenerBase::HandleRoot(const RequestType& request,
     return true;
   }
 
-  StringPiece path, query;
+  absl::string_view path, query;
   tie(path, query) = ParseQuery(target);
   auto args = SplitQuery(query);
 
@@ -97,7 +96,7 @@ bool HttpListenerBase::HandleRoot(const RequestType& request,
   return false;
 }
 
-bool HttpListenerBase::RegisterCb(StringPiece path, RequestCb cb) {
+bool HttpListenerBase::RegisterCb(absl::string_view path, RequestCb cb) {
   CbInfo cb_info{.cb = cb};
 
   auto res = cb_map_.emplace(path, cb_info);
@@ -133,8 +132,8 @@ void HttpHandler2::HandleOne(const RequestType& req, HttpContext* cntx) {
   if (base_->HandleRoot(req, cntx)) {
     return;
   }
-  StringPiece target = as_absl(req.target());
-  StringPiece path, query;
+  absl::string_view target = as_absl(req.target());
+  absl::string_view path, query;
   tie(path, query) = ParseQuery(target);
   VLOG(2) << "Searching for " << path;
 
