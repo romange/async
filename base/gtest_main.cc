@@ -2,6 +2,7 @@
 // Author: Roman Gershman (romange@gmail.com)
 //
 #include <dirent.h>
+#include <gperftools/profiler.h>
 
 #include "base/gtest.h"
 #include "base/init.h"
@@ -91,6 +92,8 @@ string ProgramRunfile(const string& relative_path) {
 
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
+  ProfilerEnable();  // Dummy call to force linker to use profiler lib.
+
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--bench") == 0) {
       benchmark::Initialize(&argc, argv);

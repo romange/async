@@ -4,7 +4,7 @@ cxx_link(base glog::glog gflags::gflags atomic rt
 
 # Define default gtest_main for tests.
 add_library(gtest_main_ext gtest_main.cc)
-target_link_libraries(gtest_main_ext gmock base benchmark)
+target_link_libraries(gtest_main_ext gmock base benchmark TRDP::gperf)
 
 cxx_test(mpmc_bounded_queue_test base LABELS CI)
 cxx_test(arena_test base LABELS CI)

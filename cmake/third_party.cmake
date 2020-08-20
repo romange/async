@@ -222,18 +222,10 @@ add_third_party(
   PATCH_COMMAND ./autogen.sh
   CONFIGURE_COMMAND <SOURCE_DIR>/configure --enable-frame-pointers --enable-static=no
                     --enable-libunwind "CXXFLAGS=${THIRD_PARTY_CXX_FLAGS}"
-                    --disable-deprecated-pprof --enable-aggressive-decommit-by-default
-                    --prefix=${THIRD_PARTY_LIB_DIR}/gperf
-  LIB libtcmalloc_and_profiler.so
+                    --disable-deprecated-pprof --disable-heap-checker --enable-aggressive-decommit-by-default
+                    --disable-debugalloc --disable-heap-profiler --prefix=${THIRD_PARTY_LIB_DIR}/gperf
+  LIB libprofiler.so
 )
-
-add_library(fast_malloc SHARED IMPORTED)
-add_dependencies(fast_malloc gperf_project)
-set_target_properties(fast_malloc PROPERTIES IMPORTED_LOCATION
-                      ${GPERF_LIB_DIR}/libtcmalloc_and_profiler.so
-                      IMPORTED_LINK_INTERFACE_LIBRARIES unwind
-                      INTERFACE_INCLUDE_DIRECTORIES ${GPERF_INCLUDE_DIR}
-                      )
 
 add_third_party(pmr
   GIT_REPOSITORY https://github.com/romange/pmr.git

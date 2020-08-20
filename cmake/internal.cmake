@@ -131,7 +131,7 @@ function(cxx_test name)
 
   add_include(${name} ${GTEST_INCLUDE_DIR} ${BENCHMARK_INCLUDE_DIR})
   target_compile_definitions(${name} PRIVATE _TEST_BASE_FILE_=\"${name}.cc\")
-  cxx_link(${name} gtest_main_ext fast_malloc ${parsed_UNPARSED_ARGUMENTS})
+  cxx_link(${name} gtest_main_ext ${parsed_UNPARSED_ARGUMENTS})
 
   add_test(NAME ${name} COMMAND $<TARGET_FILE:${name}>)
   set_tests_properties(${name} PROPERTIES LABELS "${parsed_LABELS}")
