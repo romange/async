@@ -34,6 +34,7 @@ pthread_t StartThread(const char* name, void *(*start_routine) (void *), void *a
   PTHREAD_CHECK(attr_init(&attrs));
   PTHREAD_CHECK(attr_setstacksize(&attrs, kThreadStackSize));
 
+
   pthread_t result;
   VLOG(1) << "Starting thread " << name;
 

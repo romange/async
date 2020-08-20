@@ -3,6 +3,7 @@
 //
 #pragma once
 
+#include <limits.h>  // PTHREAD_STACK_MIN
 #include <pthread.h>
 #include <functional>
 #include "base/logging.h"
@@ -15,7 +16,8 @@
 
 namespace base {
 
-constexpr int kThreadStackSize = 65536;
+constexpr size_t kThreadStackSize = 1 << 18;
+static_assert(kThreadStackSize >= PTHREAD_STACK_MIN);
 
 void InitCondVarWithClock(clockid_t clock_id, pthread_cond_t* var);
 
