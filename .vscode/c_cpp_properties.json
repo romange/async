@@ -13,6 +13,7 @@
                 "${workspaceFolder}",
                 "${workspaceFolder}/genfiles",
                 "${workspaceFolder}/build-opt/_deps/abseil_cpp-src",
+                "${workspaceFolder}/build-opt/third_party/libs/uring/include",
                 "${workspaceFolder}/build-opt/_deps/gflags-build/include",
                 "${workspaceFolder}/build-opt/_deps/glog-build",
                 "${default}"

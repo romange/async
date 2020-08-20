@@ -249,3 +249,12 @@ add_third_party(
   SOURCE_SUBDIR cmake_unofficial
   CMAKE_PASS_FLAGS "-DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF"
 )
+
+
+add_third_party(
+  uring
+  GIT_REPOSITORY https://github.com/axboe/liburing.git
+  GIT_TAG liburing-0.7
+  CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${THIRD_PARTY_LIB_DIR}/uring
+  BUILD_IN_SOURCE 1
+)

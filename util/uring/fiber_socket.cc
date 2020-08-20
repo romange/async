@@ -230,7 +230,7 @@ auto FiberSocket::RemoteEndpoint() const -> endpoint_type {
 
 auto FiberSocket::Send(const iovec* ptr, size_t len) -> expected_size_t {
   CHECK(p_);
-  CHECK_GT(len, 0);
+  CHECK_GT(len, 0U);
   CHECK_GE(fd_, 0);
 
   if (fd_ & IS_SHUTDOWN) {
@@ -272,7 +272,7 @@ auto FiberSocket::Send(const iovec* ptr, size_t len) -> expected_size_t {
 }
 
 auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
-  CHECK_GT(len, 0);
+  CHECK_GT(len, 0U);
   CHECK(p_);
   CHECK_GE(fd_, 0);
 

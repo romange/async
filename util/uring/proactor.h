@@ -10,7 +10,11 @@
 #include <boost/fiber/fiber.hpp>
 #include <functional>
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Waddress"
 #include "base/function2.hpp"
+#pragma GCC diagnostic pop
+
 #include "base/mpmc_bounded_queue.h"
 #include "util/fibers/event_count.h"
 #include "util/fibers/fibers_ext.h"
