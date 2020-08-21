@@ -6,6 +6,8 @@
 
 using namespace boost;
 
+using base::VarzValue;
+
 namespace util {
 namespace uring {
 

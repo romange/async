@@ -6,12 +6,11 @@
 #include <string>
 #include <vector>
 
-namespace util {
+namespace base {
 
 class VarzValue {
  public:
   typedef std::vector<std::pair<std::string, VarzValue>> Map;
-
 
   // Should be union but too complicated to code it in c++11.
   int64_t num;
@@ -44,8 +43,10 @@ class VarzValue {
   }
 
  private:
-  VarzValue(int64_t n, Type t) : num(n), type(t) {}
-  VarzValue(double d) : dbl(d), type(DOUBLE) {}
+  VarzValue(int64_t n, Type t) : num(n), type(t) {
+  }
+  VarzValue(double d) : dbl(d), type(DOUBLE) {
+  }
 };
 
-}  // namespace util
+}  // namespace base

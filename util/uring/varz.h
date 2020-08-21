@@ -6,8 +6,7 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
 #include "base/arena.h"
-
-#include "util/uring/varz_node.h"
+#include "base/varz_node.h"
 #include "util/uring/sliding_counter.h"
 
 #define DEFINE_VARZ(type, name) ::util::uring::type name(#name)
@@ -15,9 +14,9 @@
 namespace util {
 namespace uring {
 
-class VarzQps : public VarzListNode {
+class VarzQps : public base::VarzListNode {
  public:
-  explicit VarzQps(const char* varname) : VarzListNode(varname) {
+  explicit VarzQps(const char* varname) : base::VarzListNode(varname) {
   }
 
   void Init(ProactorPool* pp) {
@@ -37,13 +36,13 @@ class VarzQps : public VarzListNode {
   Counter val_;
 };
 
-class VarzMapAverage : public VarzListNode {
+class VarzMapAverage : public base::VarzListNode {
   using Counter = SlidingCounterTL<7>;
   using SumCnt = std::pair<Counter, Counter>;
   using Map = absl::flat_hash_map<absl::string_view, SumCnt>;
 
  public:
-  explicit VarzMapAverage(const char* varname) : VarzListNode(varname) {
+  explicit VarzMapAverage(const char* varname) : base::VarzListNode(varname) {
   }
   ~VarzMapAverage();
 

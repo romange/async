@@ -3,17 +3,20 @@
 //
 #include "util/http/status_page.h"
 
-#include "absl/strings/str_replace.h"
-#include "absl/time/clock.h"
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_replace.h>
+#include <absl/time/clock.h>
 
 #include "base/proc_util.h"
-#include "util/uring/varz.h"
+#include "base/varz_node.h"
 
 namespace util {
 namespace http {
 using namespace std;
 using namespace boost;
+using base::VarzListNode;
 using beast::http::field;
+
 namespace h2 = beast::http;
 typedef h2::response<h2::string_body> StringResponse;
 

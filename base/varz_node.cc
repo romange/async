@@ -2,10 +2,10 @@
 // Author: Roman Gershman (romange@gmail.com)
 //
 
-#include "util/uring/varz_node.h"
+#include "base/varz_node.h"
 #include "absl/strings/str_cat.h"
 
-namespace util {
+namespace base {
 
 using namespace std;
 using absl::StrAppend;
@@ -77,4 +77,4 @@ void VarzListNode::Iterate(std::function<void(const char*, AnyValue&&)> f) {
   }
 }
 
-}  // namespace util
+}  // namespace base

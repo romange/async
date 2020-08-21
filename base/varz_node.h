@@ -7,13 +7,13 @@
 #include <string>
 
 #include "base/RWSpinLock.h"
-#include "util/uring/varz_value.h"
+#include "base/varz_value.h"
 
-namespace util {
+namespace base {
 
 class VarzListNode {
  public:
-  typedef util::VarzValue AnyValue;
+  typedef base::VarzValue AnyValue;
 
   explicit VarzListNode(const char* name);
   virtual ~VarzListNode();
@@ -44,4 +44,4 @@ class VarzListNode {
   VarzListNode* prev_;
 };
 
-}  // namespace util
+}  // namespace base
