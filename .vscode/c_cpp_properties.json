@@ -17,6 +17,7 @@
                 "${workspaceFolder}/build-opt/_deps/abseil_cpp-src",
                 "${workspaceFolder}/build-opt/_deps/gflags-build/include",
                 "${workspaceFolder}/build-opt/_deps/gtest-src/googletest/include",
+                "${workspaceFolder}/build-opt/_deps/gtest-src/googlemock/include",
                 "${workspaceFolder}/build-opt/_deps/glog-build",
                 "${workspaceFolder}/build-opt/_deps/benchmark-src/include",
                 "${default}"
