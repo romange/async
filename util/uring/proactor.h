@@ -159,9 +159,10 @@ class Proactor {
 
   unsigned RegisterFd(int source_fd);
 
-  int GetRealFd(int fixed_fd) const {
-    return sqpoll_f_ && fixed_fd >= 0 ? register_fds_[fixed_fd] : fixed_fd;
+  int TranslateFixedFd(int fixed_fd) const {
+    return fixed_fd >= 0 ? register_fds_[fixed_fd] : fixed_fd;
   }
+
   void UnregisterFd(unsigned fixed_fd);
 
  private:

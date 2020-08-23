@@ -48,9 +48,7 @@ class FiberCall {
   }
 
   IoResult Get() {
-    if (proactor_->HasSqPoll()) {
-      se_.sqe()->flags |= IOSQE_FIXED_FILE;
-    }
+    se_.sqe()->flags |= IOSQE_FIXED_FILE;
     me_->suspend();
     me_ = nullptr;
 
@@ -115,9 +113,7 @@ auto FiberSocket::Close() -> error_code {
 
     int fd = RealFd();
     posix_err_wrap(::close(fd), &ec);
-    if (p_ && p_->HasSqPoll()) {
-      p_->UnregisterFd(fd_ & FD_MASK);
-    }
+    p_->UnregisterFd(fd_ & FD_MASK);
     fd_ = -1;
   }
   return ec;
@@ -158,7 +154,7 @@ void FiberSocket::SetProactor(Proactor* p) {
   CHECK(p_ == nullptr);
   p_ = p;
 
-  if (fd_ >= 0 && p->HasSqPoll()) {
+  if (fd_ >= 0) {
     fd_ = p->RegisterFd(fd_ & FD_MASK);
   }
 }
@@ -170,8 +166,8 @@ auto FiberSocket::Accept(FiberSocket* peer) -> error_code {
   socklen_t addr_len = sizeof(client_addr);
 
   error_code ec;
-  int fd = fd_ & FD_MASK;
-  int real_fd = p_->GetRealFd(fd);
+
+  int real_fd = RealFd();
   while (true) {
     int res =
         accept4(real_fd, (struct sockaddr*)&client_addr, &addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
@@ -184,7 +180,7 @@ auto FiberSocket::Accept(FiberSocket* peer) -> error_code {
 
     if (errno == EAGAIN) {
       FiberCall fc(p_);
-      fc->PrepPollAdd(fd, POLLIN);
+      fc->PrepPollAdd(fd_ & FD_MASK, POLLIN);
       IoResult io_res = fc.Get();
 
       if (io_res == POLLERR) {
@@ -207,9 +203,12 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
   fd_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (posix_err_wrap(fd_, &ec) < 0)
     return ec;
+
   if (p_->HasSqPoll()) {
     LOG(FATAL) << "Not supported with SQPOLL, TBD";
   }
+  fd_ = p_->RegisterFd(fd_);
+
   FiberCall fc(p_);
   fc->PrepConnect(fd_, ep.data(), ep.size());
 
@@ -356,7 +355,7 @@ auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
 }
 
 inline int FiberSocket::RealFd() const {
-  return p_ ? p_->GetRealFd(fd_ & FD_MASK) : fd_ & FD_MASK;
+  return p_ ? p_->TranslateFixedFd(fd_ & FD_MASK) : fd_ & FD_MASK;
 }
 
 }  // namespace uring

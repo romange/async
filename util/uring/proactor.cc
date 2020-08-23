@@ -300,12 +300,10 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   sqpoll_f_ = (params.flags & IORING_SETUP_SQPOLL) != 0;
 
   wake_fixed_fd_ = wake_fd_;
-  if (sqpoll_f_) {
-    register_fds_.resize(64, -1);
-    register_fds_[0] = wake_fd_;
-    wake_fixed_fd_ = 0;
-    CHECK_EQ(0, io_uring_register_files(&ring_, register_fds_.data(), register_fds_.size()));
-  }
+  register_fds_.resize(64, -1);
+  register_fds_[0] = wake_fd_;
+  wake_fixed_fd_ = 0;
+  CHECK_EQ(0, io_uring_register_files(&ring_, register_fds_.data(), register_fds_.size()));
 
   if (!fast_poll_f_) {
     LOG_FIRST_N(INFO, 1) << "IORING_FEAT_FAST_POLL feature is not present in the kernel";
@@ -467,9 +465,7 @@ void Proactor::ArmWakeupEvent() {
 
   io_uring_prep_poll_add(sqe, wake_fixed_fd_, POLLIN);
   sqe->user_data = kWakeIndex;
-  if (sqpoll_f_) {
-    sqe->flags |= IOSQE_FIXED_FILE;
-  }
+  sqe->flags |= IOSQE_FIXED_FILE;
 }
 
 unsigned Proactor::RegisterFd(int source_fd) {

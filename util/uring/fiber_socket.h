@@ -81,7 +81,7 @@ class FiberSocket : public SyncStreamInterface {
   }
 
   int RealFd() const;
-  
+
   endpoint_type LocalEndpoint() const;
   endpoint_type RemoteEndpoint() const;
 
@@ -102,7 +102,7 @@ class FiberSocket : public SyncStreamInterface {
  private:
   // Gives me 512M descriptors.
   enum { FD_MASK = 0x1fffffff };
-  enum { IS_SHUTDOWN = 0x20000000 };
+  enum { IS_SHUTDOWN = 0x20000000, FIXED_FD = 0x40000000 };
 
   int32_t fd_;
 
