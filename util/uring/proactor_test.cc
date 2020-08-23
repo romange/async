@@ -102,18 +102,6 @@ TEST_F(ProactorTest, SqeOverflow) {
   close(fd);
 }
 
-static void InitSqe(int op, int fd, io_uring_sqe* sqe) {
-  sqe->opcode = op;
-  sqe->fd = fd;
-  sqe->flags = 0;
-  sqe->ioprio = 0;
-  sqe->addr = 0;
-  sqe->off = 0;
-  sqe->len = 0;
-  sqe->rw_flags = 0;
-  sqe->__pad2[0] = sqe->__pad2[1] = sqe->__pad2[2] = 0;
-}
-
 TEST_F(ProactorTest, SqPoll) {
   if (geteuid() != 0) {
     LOG(INFO) << "Requires root permissions";
@@ -123,14 +111,14 @@ TEST_F(ProactorTest, SqPoll) {
   io_uring_params params;
   memset(&params, 0, sizeof(params));
 
-  // IORING_SETUP_SQPOLL require special permissions. In addition, every fd used
+  // IORING_SETUP_SQPOLL require CAP_SYS_ADMIN permissions (root). In addition, every fd used
   // with this ring should be registered via io_uring_register syscall.
   params.flags |= IORING_SETUP_SQPOLL;
   io_uring ring;
 
   ASSERT_EQ(0, io_uring_queue_init_params(16, &ring, &params));
   io_uring_sqe* sqe = io_uring_get_sqe(&ring);
-  InitSqe(IORING_OP_NOP, -1, sqe);
+  io_uring_prep_nop(sqe);
   sqe->user_data = 42;
   int num_submitted = io_uring_submit(&ring);
   ASSERT_EQ(1, num_submitted);
@@ -141,27 +129,45 @@ TEST_F(ProactorTest, SqPoll) {
   EXPECT_EQ(42, cqe->user_data);
   io_uring_cq_advance(&ring, 1);
 
-  int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
+  int fds[2];
+  for (int i = 0; i < 2; ++i) {
+    fds[i] = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    ASSERT_GT(fds[i], 0);
+  }
+  int srv_fd = fds[0];
+  int clientfd = fds[1];
+
+  ASSERT_EQ(0, io_uring_register_files(&ring, fds, 2));
+
   struct sockaddr_in serv_addr;
   memset(&serv_addr, 0, sizeof(serv_addr));
 	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(1234);
-  CHECK_EQ(1, inet_aton("127.0.0.1", &serv_addr.sin_addr));
+	serv_addr.sin_port = htons(10200);
+  serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
+  int res = bind(srv_fd, (sockaddr*)&serv_addr, sizeof(serv_addr));
+  ASSERT_EQ(0, res) << strerror(errno) << " " << errno;
+
+  // Issue recv command
   sqe = io_uring_get_sqe(&ring);
-  InitSqe(IORING_OP_CONNECT, fd, sqe);
-  sqe->addr = (unsigned long)&serv_addr;
-  sqe->len = 0;
-  sqe->off = sizeof(serv_addr);
+  char buf[100];
+  io_uring_prep_recv(sqe, 0, buf, sizeof(buf), 0);
   sqe->user_data = 43;
+  sqe->flags |= IOSQE_FIXED_FILE;
   num_submitted = io_uring_submit(&ring);
   ASSERT_EQ(1, num_submitted);
-  ASSERT_EQ(0, io_uring_wait_cqe(&ring, &cqe));
-  EXPECT_EQ(-EBADF, cqe->res);  // Due to the fact we did not register fd.
-  EXPECT_EQ(43, cqe->user_data);
+
+  // Issue connect command. Cpnnect/accept are not supported by uring/sqpoll.
+  res = connect(clientfd, (sockaddr*)&serv_addr, sizeof(serv_addr));
+  ASSERT_EQ(0, res);
+  write(clientfd, buf, 1);
+
+  ASSERT_EQ(0, io_uring_wait_cqe_nr(&ring, &cqe, 1));
+  ASSERT_EQ(43, cqe[0].user_data);
+  EXPECT_EQ(1, cqe->res);  // Got 1 byte
 
   io_uring_queue_exit(&ring);
-  close(fd);
+  close(srv_fd);
 }
 
 TEST_F(ProactorTest, AsyncEvent) {

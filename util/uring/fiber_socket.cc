@@ -31,7 +31,7 @@ class FiberCall {
   IoResult io_res_;
 
  public:
-  FiberCall(Proactor* proactor) : me_(fibers::context::active()), io_res_(0) {
+  FiberCall(Proactor* proactor) : me_(fibers::context::active()), io_res_(0), proactor_(proactor) {
     auto waker = [this](IoResult res, int32_t, Proactor* mgr) {
       io_res_ = res;
       fibers::context::active()->schedule(me_);
@@ -48,11 +48,17 @@ class FiberCall {
   }
 
   IoResult Get() {
+    if (proactor_->HasSqPoll()) {
+      se_.sqe()->flags |= IOSQE_FIXED_FILE;
+    }
     me_->suspend();
     me_ = nullptr;
 
     return io_res_;
   }
+
+ private:
+  Proactor* proactor_;
 };
 
 inline ssize_t posix_err_wrap(ssize_t res, FiberSocket::error_code* ec) {
@@ -94,8 +100,9 @@ auto FiberSocket::Shutdown(int how) -> error_code {
   error_code ec;
   if (fd_ & IS_SHUTDOWN)
     return ec;
+  int fd = RealFd();
 
-  posix_err_wrap(::shutdown(fd_ & FD_MASK, how), &ec);
+  posix_err_wrap(::shutdown(fd, how), &ec);
   fd_ |= IS_SHUTDOWN;  // Enter shutdown state unrelated to the success of the call.
 
   return ec;
@@ -103,10 +110,14 @@ auto FiberSocket::Shutdown(int how) -> error_code {
 
 auto FiberSocket::Close() -> error_code {
   error_code ec;
-  if (fd_ > 0) {
+  if (fd_ >= 0) {
     DVSOCK(1) << "Closing socket";
 
-    posix_err_wrap(::close(fd_ & FD_MASK), &ec);
+    int fd = RealFd();
+    posix_err_wrap(::close(fd), &ec);
+    if (p_ && p_->HasSqPoll()) {
+      p_->UnregisterFd(fd_ & FD_MASK);
+    }
     fd_ = -1;
   }
   return ec;
@@ -143,6 +154,15 @@ auto FiberSocket::Listen(unsigned port, unsigned backlog, uint32_t sock_opts_mas
   return ec;
 }
 
+void FiberSocket::SetProactor(Proactor* p) {
+  CHECK(p_ == nullptr);
+  p_ = p;
+
+  if (fd_ >= 0 && p->HasSqPoll()) {
+    fd_ = p->RegisterFd(fd_ & FD_MASK);
+  }
+}
+
 auto FiberSocket::Accept(FiberSocket* peer) -> error_code {
   CHECK(p_);
 
@@ -151,9 +171,10 @@ auto FiberSocket::Accept(FiberSocket* peer) -> error_code {
 
   error_code ec;
   int fd = fd_ & FD_MASK;
-
+  int real_fd = p_->GetRealFd(fd);
   while (true) {
-    int res = accept4(fd, (struct sockaddr*)&client_addr, &addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    int res =
+        accept4(real_fd, (struct sockaddr*)&client_addr, &addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
     if (res >= 0) {
       *peer = FiberSocket{res};
       return ec;
@@ -186,7 +207,9 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
   fd_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (posix_err_wrap(fd_, &ec) < 0)
     return ec;
-
+  if (p_->HasSqPoll()) {
+    LOG(FATAL) << "Not supported with SQPOLL, TBD";
+  }
   FiberCall fc(p_);
   fc->PrepConnect(fd_, ep.data(), ep.size());
 
@@ -208,7 +231,8 @@ auto FiberSocket::LocalEndpoint() const -> endpoint_type {
     return endpoint;
   socklen_t addr_len = endpoint.capacity();
   error_code ec;
-  posix_err_wrap(::getsockname(fd_ & FD_MASK, endpoint.data(), &addr_len), &ec);
+
+  posix_err_wrap(::getsockname(RealFd(), endpoint.data(), &addr_len), &ec);
   CHECK(!ec) << ec << "/" << ec.message() << " while running getsockname";
 
   endpoint.resize(addr_len);
@@ -222,7 +246,8 @@ auto FiberSocket::RemoteEndpoint() const -> endpoint_type {
 
   socklen_t addr_len = endpoint.capacity();
   error_code ec;
-  if (getpeername(fd_ & FD_MASK, endpoint.data(), &addr_len) == 0)
+
+  if (getpeername(RealFd(), endpoint.data(), &addr_len) == 0)
     endpoint.resize(addr_len);
 
   return endpoint;
@@ -295,7 +320,7 @@ auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
   if (!p_->HasFastPoll()) {
     SubmitEntry se = p_->GetSubmitEntry(nullptr, 0);
     se.PrepPollAdd(fd, POLLIN);
-    se.sqe()->flags = IOSQE_IO_LINK;
+    se.sqe()->flags |= IOSQE_IO_LINK;
   }
 
   ssize_t res;
@@ -328,6 +353,10 @@ auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
   es.operator bool();
 
   return nonstd::make_unexpected(std::move(ec));
+}
+
+inline int FiberSocket::RealFd() const {
+  return p_ ? p_->GetRealFd(fd_ & FD_MASK) : fd_ & FD_MASK;
 }
 
 }  // namespace uring

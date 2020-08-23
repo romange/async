@@ -22,7 +22,7 @@ class FiberSocket : public SyncStreamInterface {
   FiberSocket(const FiberSocket&) = delete;
   void operator=(const FiberSocket&) = delete;
 
-  explicit FiberSocket(int fd) : fd_(fd) {
+  explicit FiberSocket(int fd) : fd_(fd), p_(nullptr) {
   }
 
  public:
@@ -31,7 +31,7 @@ class FiberSocket : public SyncStreamInterface {
   using error_code = std::error_code;
   using expected_size_t = nonstd::expected<size_t, error_code>;
 
-  FiberSocket() : fd_(-1), p_(nullptr) {
+  FiberSocket() : FiberSocket(-1) {
   }
 
   FiberSocket(FiberSocket&& other) noexcept : fd_(other.fd_), p_(other.p_) {
@@ -80,6 +80,8 @@ class FiberSocket : public SyncStreamInterface {
     fd_ = -1;
   }
 
+  int RealFd() const;
+  
   endpoint_type LocalEndpoint() const;
   endpoint_type RemoteEndpoint() const;
 
@@ -89,7 +91,7 @@ class FiberSocket : public SyncStreamInterface {
     return fd_ >= 0 && (fd_ & IS_SHUTDOWN) == 0;
   }
 
-  void set_proactor(Proactor* p) { p_ = p;}
+  void SetProactor(Proactor* p);
 
   Proactor* proactor() { return p_; }
 

@@ -120,7 +120,7 @@ unsigned short AcceptServer::AddListener(unsigned short port, ListenerInterface*
   lii->RegisterPool(pool_);
 
   Proactor* next = pool_->GetNextProactor();
-  fs.set_proactor(next);
+  fs.SetProactor(next);
   lii->listener_ = std::move(fs);
 
   list_interface_.emplace_back(lii);
@@ -160,7 +160,7 @@ void ListenerInterface::RunAcceptLoop() {
     VLOG(2) << "Accepted " << peer.native_handle() << ": " << peer.LocalEndpoint();
     Proactor* next = pool_->GetNextProactor();  // Could be for another thread.
 
-    peer.set_proactor(next);
+    peer.SetProactor(next);
     Connection* conn = NewConnection(next);
     conn->SetSocket(std::move(peer));
     safe_list.Link(conn);

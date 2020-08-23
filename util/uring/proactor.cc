@@ -120,7 +120,8 @@ thread_local Proactor::TLInfo Proactor::tl_info_;
 
 Proactor::Proactor() : task_queue_(128) {
   wake_fd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-  CHECK_GT(wake_fd_, 0);
+  CHECK_GE(wake_fd_, 0);
+  VLOG(1) << "Created wake_fd is " << wake_fd_;
 
   volatile ctx::fiber dummy;  // For some weird reason I need this to pull
                               // boost::context into linkage.
@@ -131,6 +132,8 @@ Proactor::~Proactor() {
   if (thread_id_ != -1U) {
     io_uring_queue_exit(&ring_);
   }
+  VLOG(1) << "Closing wake_fd " << wake_fd_;
+
   close(wake_fd_);
 
   signal_state* ss = get_signal_state();
@@ -277,6 +280,11 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   io_uring_params params;
   memset(&params, 0, sizeof(params));
 
+  if (geteuid() == 0) {
+    params.flags |= IORING_SETUP_SQPOLL;
+    LOG_FIRST_N(INFO, 1) << "Root permissions - setting SQPOLL flag";
+  }
+
   // Optionally reuse the already created work-queue from another uring.
   if (wq_fd > 0) {
     params.flags |= IORING_SETUP_ATTACH_WQ;
@@ -289,6 +297,16 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   // params.flags = IORING_SETUP_SQPOLL;
   URING_CHECK(io_uring_queue_init_params(ring_size, &ring_, &params));
   fast_poll_f_ = (params.features & IORING_FEAT_FAST_POLL) != 0;
+  sqpoll_f_ = (params.flags & IORING_SETUP_SQPOLL) != 0;
+
+  wake_fixed_fd_ = wake_fd_;
+  if (sqpoll_f_) {
+    register_fds_.resize(64, -1);
+    register_fds_[0] = wake_fd_;
+    wake_fixed_fd_ = 0;
+    CHECK_EQ(0, io_uring_register_files(&ring_, register_fds_.data(), register_fds_.size()));
+  }
+
   if (!fast_poll_f_) {
     LOG_FIRST_N(INFO, 1) << "IORING_FEAT_FAST_POLL feature is not present in the kernel";
   }
@@ -304,14 +322,10 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   }
   CHECK_EQ(ring_size, params.sq_entries);  // Sanity.
 
-  struct io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
-  CHECK_NOTNULL(sqe);
+  ArmWakeupEvent();
 
-  io_uring_prep_poll_add(sqe, wake_fd_, POLLIN);
-  sqe->user_data = kWakeIndex;
-
-  centries_.resize(params.sq_entries);
-  next_free_ = 0;
+  centries_.resize(params.sq_entries);  // .val = -1
+  next_free_ce_ = 0;
   for (size_t i = 0; i < centries_.size() - 1; ++i) {
     centries_[i].val = i + 1;
   }
@@ -345,8 +359,9 @@ void Proactor::DispatchCompletions(io_uring_cqe* cqes, unsigned count) {
       auto payload = e.val;
       func.swap(e.cb);
 
-      e.val = next_free_;
-      next_free_ = index;
+      // Set e to be the head of free-list.
+      e.val = next_free_ce_;
+      next_free_ce_ = index;
 
       func(cqe.res, payload, this);
       continue;
@@ -364,10 +379,7 @@ void Proactor::DispatchCompletions(io_uring_cqe* cqes, unsigned count) {
       CHECK_EQ(8, read(wake_fd_, &cqe.user_data, 8));  // Pull the data
 
       // TODO: to move io_uring_get_sqe call from here to before we stall.
-      struct io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
-      CHECK(sqe);  // We just consumed CQEs. I assume it's enough to get an SQE.
-      io_uring_prep_poll_add(sqe, wake_fd_, POLLIN);  // And rearm.
-      sqe->user_data = kWakeIndex;
+      ArmWakeupEvent();
     } else {
       LOG(ERROR) << "Unrecognized user_data " << cqe.user_data;
     }
@@ -386,19 +398,19 @@ SubmitEntry Proactor::GetSubmitEntry(CbType cb, int64_t payload) {
   }
 
   if (cb) {
-    if (next_free_ < 0) {
+    if (next_free_ce_ < 0) {
       RegrowCentries();
-      DCHECK_GT(next_free_, 0);
+      DCHECK_GT(next_free_ce_, 0);
     }
 
-    res->user_data = next_free_ + kUserDataCbIndex;
-    DCHECK_LT(unsigned(next_free_), centries_.size());
+    res->user_data = next_free_ce_ + kUserDataCbIndex;
+    DCHECK_LT(unsigned(next_free_ce_), centries_.size());
 
-    auto& e = centries_[next_free_];
+    auto& e = centries_[next_free_ce_];
     DCHECK(!e.cb);  // cb is undefined.
-    DVLOG(1) << "GetSubmitEntry: index: " << next_free_ << ", socket: " << payload;
+    DVLOG(1) << "GetSubmitEntry: index: " << next_free_ce_ << ", socket: " << payload;
 
-    next_free_ = e.val;
+    next_free_ce_ = e.val;
     e.cb = std::move(cb);
     e.val = payload;
     e.opcode = -1;
@@ -444,9 +456,51 @@ void Proactor::RegrowCentries() {
   VLOG(1) << "RegrowCentries from " << prev << " to " << prev * 2;
 
   centries_.resize(prev * 2);  // grow by 2.
-  next_free_ = prev;
+  next_free_ce_ = prev;
   for (; prev < centries_.size() - 1; ++prev)
     centries_[prev].val = prev + 1;
+}
+
+void Proactor::ArmWakeupEvent() {
+  struct io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
+  CHECK_NOTNULL(sqe);
+
+  io_uring_prep_poll_add(sqe, wake_fixed_fd_, POLLIN);
+  sqe->user_data = kWakeIndex;
+  if (sqpoll_f_) {
+    sqe->flags |= IOSQE_FIXED_FILE;
+  }
+}
+
+unsigned Proactor::RegisterFd(int source_fd) {
+  auto next = std::find(register_fds_.begin() + next_free_fd_, register_fds_.end(), -1);
+  if (next == register_fds_.end()) {
+    size_t prev_sz = register_fds_.size();
+    register_fds_.resize(prev_sz * 2, -1);
+    register_fds_[prev_sz] = source_fd;
+    next_free_fd_ = prev_sz + 1;
+
+    CHECK_EQ(0, io_uring_register_files(&ring_, register_fds_.data(), register_fds_.size()));
+    return prev_sz;
+  }
+
+  *next = source_fd;
+  next_free_fd_ = next - register_fds_.begin();
+  CHECK_EQ(1, io_uring_register_files_update(&ring_, next_free_fd_, &source_fd, 1));
+  ++next_free_fd_;
+
+  return next_free_fd_ - 1;
+}
+
+void Proactor::UnregisterFd(unsigned fixed_fd) {
+  CHECK_LT(fixed_fd, register_fds_.size());
+  CHECK_GE(register_fds_[fixed_fd], 0);
+  register_fds_[fixed_fd] = -1;
+
+  CHECK_EQ(1, io_uring_register_files_update(&ring_, fixed_fd, &register_fds_[fixed_fd], 1));
+  if (fixed_fd < next_free_fd_) {
+    next_free_fd_ = fixed_fd;
+  }
 }
 
 }  // namespace uring

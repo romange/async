@@ -99,9 +99,12 @@ class Proactor {
     tl_info_.proactor_index = index;
   }
 
-
   bool HasFastPoll() const {
     return fast_poll_f_;
+  }
+
+  bool HasSqPoll() const {
+    return sqpoll_f_;
   }
 
   /**
@@ -150,7 +153,16 @@ class Proactor {
     RegisterSignal(l, nullptr);
   }
 
-  int ring_fd() const { return ring_.ring_fd;}
+  int ring_fd() const {
+    return ring_.ring_fd;
+  }
+
+  unsigned RegisterFd(int source_fd);
+
+  int GetRealFd(int fixed_fd) const {
+    return sqpoll_f_ && fixed_fd >= 0 ? register_fds_[fixed_fd] : fixed_fd;
+  }
+  void UnregisterFd(unsigned fixed_fd);
 
  private:
   enum { WAIT_SECTION_STATE = 1UL << 31 };
@@ -178,14 +190,16 @@ class Proactor {
   }
 
   void RegrowCentries();
+  void ArmWakeupEvent();
 
   io_uring ring_;
   pthread_t thread_id_ = 0U;
 
-  int wake_fd_;
+  int wake_fd_, wake_fixed_fd_;
   bool is_stopped_ = true;
   uint8_t fast_poll_f_ : 1;
-  uint8_t reseved_f_ : 7;
+  uint8_t sqpoll_f_ : 1;
+  uint8_t reseved_f_ : 6;
 
   // We use fu2 function to allow moveable semantics.
   using Tasklet =
@@ -215,7 +229,9 @@ class Proactor {
   static_assert(sizeof(CompletionEntry) == 40, "");
 
   std::vector<CompletionEntry> centries_;
-  int32_t next_free_ = -1;
+  std::vector<int> register_fds_;
+  int32_t next_free_ce_ = -1;
+  uint32_t next_free_fd_ = 0;
 
   struct TLInfo {
     bool is_proactor_thread = false;
@@ -224,7 +240,6 @@ class Proactor {
   };
   static thread_local TLInfo tl_info_;
 };
-
 
 
 // Implementation
