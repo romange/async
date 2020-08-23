@@ -112,8 +112,8 @@ auto FiberSocket::Close() -> error_code {
     DVSOCK(1) << "Closing socket";
 
     int fd = RealFd();
-    posix_err_wrap(::close(fd), &ec);
     p_->UnregisterFd(fd_ & FD_MASK);
+    posix_err_wrap(::close(fd), &ec);
     fd_ = -1;
   }
   return ec;
