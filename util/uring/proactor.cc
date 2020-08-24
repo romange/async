@@ -331,6 +331,8 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   }
   CHECK_EQ(ring_size, params.sq_entries);  // Sanity.
 
+  CheckForTimeoutSupport();
+
   ArmWakeupEvent();
 
   centries_.resize(params.sq_entries);  // .val = -1
@@ -514,6 +516,28 @@ void Proactor::UnregisterFd(unsigned fixed_fd) {
   if (fixed_fd < next_free_fd_) {
     next_free_fd_ = fixed_fd;
   }
+}
+
+void Proactor::CheckForTimeoutSupport() {
+  io_uring_sqe* sqe = CHECK_NOTNULL(io_uring_get_sqe(&ring_));
+  timespec ts = {.tv_sec = 0, .tv_nsec = 10000};
+  static_assert(sizeof(__kernel_timespec) == sizeof(timespec));
+
+  io_uring_prep_timeout(sqe, (__kernel_timespec*)&ts, 0, 0);
+  sqe->user_data = 2;
+  int submitted = io_uring_submit(&ring_);
+  CHECK_EQ(1, submitted);
+  io_uring_cqe* cqe = nullptr;
+  CHECK_EQ(0, io_uring_wait_cqe(&ring_, &cqe));
+  CHECK_EQ(2U, cqe->user_data);
+  if (cqe->res == -EINVAL) {
+    support_timeout_ = 0;
+    VLOG(1) << "Timeout op is not supported";
+  } else {
+    CHECK_EQ(cqe->res, -ETIME);
+    support_timeout_ = 1;
+  }
+  io_uring_cq_advance(&ring_, 1);
 }
 
 }  // namespace uring
