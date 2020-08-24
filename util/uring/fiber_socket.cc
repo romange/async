@@ -31,7 +31,9 @@ class FiberCall {
   IoResult io_res_;
 
  public:
-  FiberCall(Proactor* proactor) : me_(fibers::context::active()), io_res_(0), proactor_(proactor) {
+  FiberCall(Proactor* proactor) : me_(fibers::context::active()), io_res_(0) {
+    register_fd_ = proactor->HasRegisterFd();
+
     auto waker = [this](IoResult res, int32_t, Proactor* mgr) {
       io_res_ = res;
       fibers::context::active()->schedule(me_);
@@ -48,7 +50,7 @@ class FiberCall {
   }
 
   IoResult Get() {
-    se_.sqe()->flags |= IOSQE_FIXED_FILE;
+    se_.sqe()->flags |= (register_fd_ ? IOSQE_FIXED_FILE : 0);
     me_->suspend();
     me_ = nullptr;
 
@@ -56,7 +58,7 @@ class FiberCall {
   }
 
  private:
-  Proactor* proactor_;
+  bool register_fd_;
 };
 
 inline ssize_t posix_err_wrap(ssize_t res, FiberSocket::error_code* ec) {

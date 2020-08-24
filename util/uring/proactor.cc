@@ -13,8 +13,11 @@
 #include <boost/fiber/scheduler.hpp>
 
 #include "absl/base/attributes.h"
+#include "absl/time/clock.h"
 #include "base/logging.h"
 #include "util/uring/uring_fiber_algo.h"
+
+DEFINE_bool(proactor_register_fd, true, "If true tries to register file destricptors");
 
 #define URING_CHECK(x)                                                           \
   do {                                                                           \
@@ -283,6 +286,7 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   if (geteuid() == 0) {
     params.flags |= IORING_SETUP_SQPOLL;
     LOG_FIRST_N(INFO, 1) << "Root permissions - setting SQPOLL flag";
+    CHECK(FLAGS_proactor_register_fd);
   }
 
   // Optionally reuse the already created work-queue from another uring.
@@ -300,10 +304,17 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   sqpoll_f_ = (params.flags & IORING_SETUP_SQPOLL) != 0;
 
   wake_fixed_fd_ = wake_fd_;
-  register_fds_.resize(64, -1);
-  register_fds_[0] = wake_fd_;
-  wake_fixed_fd_ = 0;
-  CHECK_EQ(0, io_uring_register_files(&ring_, register_fds_.data(), register_fds_.size()));
+  register_fd_ = FLAGS_proactor_register_fd;
+  if (register_fd_) {
+    register_fds_.resize(64, -1);
+    register_fds_[0] = wake_fd_;
+    wake_fixed_fd_ = 0;
+
+    absl::Time start = absl::Now();
+    CHECK_EQ(0, io_uring_register_files(&ring_, register_fds_.data(), register_fds_.size()));
+    absl::Duration duration = absl::Now() - start;
+    VLOG(1) << "io_uring_register_files took " << absl::ToInt64Milliseconds(duration) << "ms";
+  }
 
   if (!fast_poll_f_) {
     LOG_FIRST_N(INFO, 1) << "IORING_FEAT_FAST_POLL feature is not present in the kernel";
@@ -465,10 +476,13 @@ void Proactor::ArmWakeupEvent() {
 
   io_uring_prep_poll_add(sqe, wake_fixed_fd_, POLLIN);
   sqe->user_data = kWakeIndex;
-  sqe->flags |= IOSQE_FIXED_FILE;
+  sqe->flags |= (register_fd_ ? IOSQE_FIXED_FILE : 0);
 }
 
 unsigned Proactor::RegisterFd(int source_fd) {
+  if (!register_fd_)
+    return source_fd;
+
   auto next = std::find(register_fds_.begin() + next_free_fd_, register_fds_.end(), -1);
   if (next == register_fds_.end()) {
     size_t prev_sz = register_fds_.size();
@@ -489,6 +503,9 @@ unsigned Proactor::RegisterFd(int source_fd) {
 }
 
 void Proactor::UnregisterFd(unsigned fixed_fd) {
+  if (!register_fd_)
+    return;
+
   CHECK_LT(fixed_fd, register_fds_.size());
   CHECK_GE(register_fds_[fixed_fd], 0);
   register_fds_[fixed_fd] = -1;

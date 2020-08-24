@@ -99,12 +99,17 @@ class Proactor {
     tl_info_.proactor_index = index;
   }
 
+  // Uring configuration options.
   bool HasFastPoll() const {
     return fast_poll_f_;
   }
 
   bool HasSqPoll() const {
     return sqpoll_f_;
+  }
+
+  bool HasRegisterFd() const {
+    return register_fd_;
   }
 
   /**
@@ -160,7 +165,7 @@ class Proactor {
   unsigned RegisterFd(int source_fd);
 
   int TranslateFixedFd(int fixed_fd) const {
-    return fixed_fd >= 0 ? register_fds_[fixed_fd] : fixed_fd;
+    return register_fd_ && fixed_fd >= 0 ? register_fds_[fixed_fd] : fixed_fd;
   }
 
   void UnregisterFd(unsigned fixed_fd);
@@ -200,7 +205,8 @@ class Proactor {
   bool is_stopped_ = true;
   uint8_t fast_poll_f_ : 1;
   uint8_t sqpoll_f_ : 1;
-  uint8_t reseved_f_ : 6;
+  uint8_t register_fd_ : 1;
+  uint8_t reserved_f_ : 5;
 
   // We use fu2 function to allow moveable semantics.
   using Tasklet =
