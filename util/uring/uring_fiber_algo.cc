@@ -110,15 +110,23 @@ void UringFiberAlgo::suspend_until(const time_point& abs_time) noexcept {
     SubmitEntry se = proactor_->GetSubmitEntry(std::move(cb), 0);
     using namespace chrono;
     constexpr uint64_t kNsFreq = 1000000000ULL;
-
+    int64_t ns;
     const chrono::time_point<steady_clock, nanoseconds>& tp = abs_time;
-    uint64_t ns = time_point_cast<nanoseconds>(tp).time_since_epoch().count();
+
+    // 5.4 does not support absolute timespecs.
+    bool pass_abs = proactor_->support_abs_timeout_;
+    if (pass_abs) {
+      ns = time_point_cast<nanoseconds>(tp).time_since_epoch().count();
+    } else {
+      ns = chrono::nanoseconds(tp - steady_clock::now()).count();
+      if (ns < 0) ns = 0;
+    }
     ts_.tv_sec = ns / kNsFreq;
     ts_.tv_nsec = ns - ts_.tv_sec * kNsFreq;
 
     // Please note that we can not pass var on stack because we exit from the function
     // before we submit to ring. That's why ts_ is a data member.
-    se.PrepTimeout(&ts_);
+    se.PrepTimeout(&ts_, pass_abs);
   }
 
   // schedule does not block just marks main_cntx_ for activation.

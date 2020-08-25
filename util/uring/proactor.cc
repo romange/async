@@ -523,7 +523,7 @@ void Proactor::CheckForTimeoutSupport() {
   timespec ts = {.tv_sec = 0, .tv_nsec = 10000};
   static_assert(sizeof(__kernel_timespec) == sizeof(timespec));
 
-  io_uring_prep_timeout(sqe, (__kernel_timespec*)&ts, 0, 0);
+  io_uring_prep_timeout(sqe, (__kernel_timespec*)&ts, 0, IORING_TIMEOUT_ABS);
   sqe->user_data = 2;
   int submitted = io_uring_submit(&ring_);
   CHECK_EQ(1, submitted);
@@ -531,11 +531,11 @@ void Proactor::CheckForTimeoutSupport() {
   CHECK_EQ(0, io_uring_wait_cqe(&ring_, &cqe));
   CHECK_EQ(2U, cqe->user_data);
   if (cqe->res == -EINVAL) {
-    support_timeout_ = 0;
+    support_abs_timeout_ = 0;
     VLOG(1) << "Timeout op is not supported";
   } else {
     CHECK_EQ(cqe->res, -ETIME);
-    support_timeout_ = 1;
+    support_abs_timeout_ = 1;
   }
   io_uring_cq_advance(&ring_, 1);
 }

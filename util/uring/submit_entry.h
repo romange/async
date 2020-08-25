@@ -56,7 +56,7 @@ class SubmitEntry {
     PrepFd(IORING_OP_TIMEOUT, -1);
     sqe_->addr = (unsigned long)ts;
     sqe_->len = 1;
-    sqe_->timeout_flags = IORING_TIMEOUT_ABS;
+    sqe_->timeout_flags = (is_abs ? IORING_TIMEOUT_ABS : 0);
   }
 
   // TODO: To remove this accessor.
