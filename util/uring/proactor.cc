@@ -299,6 +299,9 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   // need to check if its worth pursuing.
   // For sure not in short-term.
   // params.flags = IORING_SETUP_SQPOLL;
+  VLOG(1) << "Create uring of size " << ring_size;
+
+  // If this fails with 'can not allocate memory' most probably you need to increase maxlock limit.
   URING_CHECK(io_uring_queue_init_params(ring_size, &ring_, &params));
   fast_poll_f_ = (params.features & IORING_FEAT_FAST_POLL) != 0;
   sqpoll_f_ = (params.flags & IORING_SETUP_SQPOLL) != 0;
