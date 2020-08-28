@@ -175,11 +175,16 @@ class Proactor {
 
   void Init(size_t ring_size, int wq_fd = -1);
 
+  // Called only from external threads.
   void WakeRing();
 
   void WakeupIfNeeded() {
     auto current = tq_seq_.fetch_add(2, std::memory_order_relaxed);
     if (current == WAIT_SECTION_STATE) {
+      // We protect WakeRing using tq_seq_. That means only one thread at a time
+      // can enter here. Moreover tq_seq_ == WAIT_SECTION_STATE only when
+      // proactor enters WAIT section, therefore we do not race over SQE ring with proactor thread.
+      std::atomic_thread_fence(std::memory_order_acquire);
       WakeRing();
     }
   }
@@ -202,7 +207,7 @@ class Proactor {
   io_uring ring_;
   pthread_t thread_id_ = 0U;
 
-  int wake_fd_, wake_fixed_fd_;
+  // int wake_fd_, wake_fixed_fd_;
   bool is_stopped_ = true;
   uint8_t fast_poll_f_ : 1;
   uint8_t sqpoll_f_ : 1;
