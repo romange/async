@@ -17,7 +17,7 @@
 #include "base/logging.h"
 #include "util/uring/uring_fiber_algo.h"
 
-DEFINE_bool(proactor_register_fd, true, "If true tries to register file destricptors");
+DEFINE_bool(proactor_register_fd, false, "If true tries to register file destricptors");
 
 #define URING_CHECK(x)                                                           \
   do {                                                                           \
@@ -316,9 +316,13 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
     // wake_fixed_fd_ = 0;
 
     absl::Time start = absl::Now();
-    CHECK_EQ(0, io_uring_register_files(&ring_, register_fds_.data(), register_fds_.size()));
+    int res = io_uring_register_files(&ring_, register_fds_.data(), register_fds_.size());
     absl::Duration duration = absl::Now() - start;
     VLOG(1) << "io_uring_register_files took " << absl::ToInt64Milliseconds(duration) << "ms";
+    if (res < 0) {
+      register_fd_ = 0;
+      register_fds_ = decltype(register_fds_){};
+    }
   }
 
   if (!fast_poll_f_) {
