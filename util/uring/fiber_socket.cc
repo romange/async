@@ -148,6 +148,8 @@ auto FiberSocket::Listen(unsigned port, unsigned backlog, uint32_t sock_opts_mas
   if (posix_err_wrap(bind(fd_, (struct sockaddr*)&server_addr, sizeof(server_addr)), &ec) < 0)
     return ec;
 
+  VSOCK(1) << "Listening";
+
   posix_err_wrap(listen(fd_, backlog), &ec);
   return ec;
 }
@@ -319,7 +321,11 @@ auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
   // kernels without fast-poll, however it's problematic for transactions that require SQE chains.
   // Added TODO to proactor.h
   if (!p_->HasFastPoll()) {
-    SubmitEntry se = p_->GetSubmitEntry(nullptr, 0);
+    DVSOCK(1) << "POLLIN";
+    auto cb = [this](IoResult res, int32_t, Proactor* mgr) {
+      DVSOCK(1) << "POLLING RES " << res;
+    };
+    SubmitEntry se = p_->GetSubmitEntry(std::move(cb), 0);
     se.PrepPollAdd(fd, POLLIN);
     se.sqe()->flags |= IOSQE_IO_LINK;
   }
@@ -346,9 +352,9 @@ auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
       break;
     }
 
-    LOG(FATAL) << "Unexpected error " << res << "/" << strerror(res);
+    LOG(FATAL) << "sock[" << fd << "] Unexpected error " << res << "/" << strerror(res);
   }
-  std::error_code ec(res, std::generic_category());
+  std::error_code ec(res, std::system_category());
   VSOCK(1) << "Error " << ec << " on " << RemoteEndpoint();
   expected_size_t es;
   es.operator bool();

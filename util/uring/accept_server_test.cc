@@ -84,7 +84,7 @@ void AcceptServerTest::SetUp() {
   as_->AddListener(kPort, new TestListener);
   as_->Run();
 
-  client_sock_.set_proactor(pp_->GetNextProactor());
+  client_sock_.SetProactor(pp_->GetNextProactor());
   auto address = asio::ip::make_address("127.0.0.1");
   asio::ip::tcp::endpoint ep{address, kPort};
 

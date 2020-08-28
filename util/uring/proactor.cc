@@ -533,6 +533,7 @@ void Proactor::CheckForTimeoutSupport() {
   sqe->user_data = 2;
   int submitted = io_uring_submit(&ring_);
   CHECK_EQ(1, submitted);
+
   io_uring_cqe* cqe = nullptr;
   CHECK_EQ(0, io_uring_wait_cqe(&ring_, &cqe));
   CHECK_EQ(2U, cqe->user_data);
@@ -543,7 +544,7 @@ void Proactor::CheckForTimeoutSupport() {
     support_timeout_ = 0;
     VLOG(1) << "Timeout op is not supported " << -cqe->res;
   } else {
-    CHECK_EQ(cqe->res, -ETIME);
+    CHECK(cqe->res == -ETIME || cqe->res == 0);
     support_timeout_ = 1;
   }
   io_uring_cq_advance(&ring_, 1);
