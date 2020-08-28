@@ -135,7 +135,7 @@ Proactor::~Proactor() {
   if (thread_id_ != -1U) {
     io_uring_queue_exit(&ring_);
   }
-  VLOG(1) << "Closing wake_fd " << wake_fd_;
+  VLOG(1) << "Closing wake_fd " << wake_fd_ << " ring fd: " << ring_.ring_fd;
 
   close(wake_fd_);
 
@@ -533,12 +533,15 @@ void Proactor::CheckForTimeoutSupport() {
   io_uring_cqe* cqe = nullptr;
   CHECK_EQ(0, io_uring_wait_cqe(&ring_, &cqe));
   CHECK_EQ(2U, cqe->user_data);
-  if (cqe->res == -EINVAL) {
-    support_abs_timeout_ = 0;
-    VLOG(1) << "Timeout op is not supported";
+
+  // AL2 5.4 does not support timeout. Ubuntu 5.4 supports only relative option.
+  // We can not use timeout API for 5.4.
+  if (cqe->res < 0) {
+    support_timeout_ = 0;
+    VLOG(1) << "Timeout op is not supported " << -cqe->res;
   } else {
     CHECK_EQ(cqe->res, -ETIME);
-    support_abs_timeout_ = 1;
+    support_timeout_ = 1;
   }
   io_uring_cq_advance(&ring_, 1);
 }

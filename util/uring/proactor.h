@@ -207,7 +207,7 @@ class Proactor {
   uint8_t fast_poll_f_ : 1;
   uint8_t sqpoll_f_ : 1;
   uint8_t register_fd_ : 1;
-  uint8_t support_abs_timeout_ : 1;
+  uint8_t support_timeout_ : 1;
   uint8_t reserved_f_ : 4;
 
   // We use fu2 function to allow moveable semantics.

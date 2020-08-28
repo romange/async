@@ -2,6 +2,9 @@
 // Author: Roman Gershman (romange@gmail.com)
 //
 
+#include <sys/poll.h>
+#include <sys/timerfd.h>
+
 #include "util/uring/uring_fiber_algo.h"
 
 #include "base/logging.h"
@@ -17,9 +20,16 @@ using namespace std;
 UringFiberAlgo::UringFiberAlgo(Proactor* proactor) : proactor_(proactor) {
   main_cntx_ = fibers::context::active();
   CHECK(main_cntx_->is_context(fibers::type::main_context));
+
+  if (!proactor_->support_timeout_) {
+    timer_fd_ = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    CHECK_GE(timer_fd_, 0);
+  }
 }
 
 UringFiberAlgo::~UringFiberAlgo() {
+  if (timer_fd_ >= 0)
+    close(timer_fd_);
 }
 
 void UringFiberAlgo::awakened(FiberContext* ctx, UringFiberProps& props) noexcept {
@@ -113,20 +123,25 @@ void UringFiberAlgo::suspend_until(const time_point& abs_time) noexcept {
     int64_t ns;
     const chrono::time_point<steady_clock, nanoseconds>& tp = abs_time;
 
-    // 5.4 does not support absolute timespecs.
-    bool pass_abs = proactor_->support_abs_timeout_;
-    if (pass_abs) {
-      ns = time_point_cast<nanoseconds>(tp).time_since_epoch().count();
-    } else {
-      ns = chrono::nanoseconds(tp - steady_clock::now()).count();
-      if (ns < 0) ns = 0;
-    }
+    ns = time_point_cast<nanoseconds>(tp).time_since_epoch().count();
     ts_.tv_sec = ns / kNsFreq;
     ts_.tv_nsec = ns - ts_.tv_sec * kNsFreq;
 
-    // Please note that we can not pass var on stack because we exit from the function
-    // before we submit to ring. That's why ts_ is a data member.
-    se.PrepTimeout(&ts_, pass_abs);
+    // 5.4 does not support absolute timespecs.
+    bool support_tm = proactor_->support_timeout_;
+    if (support_tm) {
+      // Please note that we can not pass var on stack because we exit from the function
+      // before we submit to ring. That's why ts_ is a data member.
+      se.PrepTimeout(&ts_, support_tm);
+    } else {
+      struct itimerspec abs_spec;
+      memset(&abs_spec, 0, sizeof(abs_spec));
+      abs_spec.it_value = ts_;
+      int res = timerfd_settime(timer_fd_, TFD_TIMER_ABSTIME, &abs_spec, NULL);
+      CHECK_EQ(0, res) << strerror(errno);
+
+      se.PrepPollAdd(timer_fd_, POLLIN);
+    }
   }
 
   // schedule does not block just marks main_cntx_ for activation.

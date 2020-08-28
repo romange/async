@@ -58,6 +58,7 @@ class UringFiberAlgo : public ::boost::fibers::algo::algorithm_with_properties<U
   FiberContext* main_cntx_;
   timespec ts_;
   uint32_t ready_cnt_ = 0;
+  int timer_fd_ = -1;
 };
 
 }  // namespace uring

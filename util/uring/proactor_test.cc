@@ -74,7 +74,7 @@ TEST_F(ProactorTest, Await) {
 TEST_F(ProactorTest, Sleep) {
   proactor_->AwaitBlocking([] {
     LOG(INFO) << "Before Sleep";
-    this_fiber::sleep_for(10ms);
+    this_fiber::sleep_for(20ms);
     LOG(INFO) << "After Sleep";
   });
 }

@@ -8,7 +8,9 @@
 #include "base/pthread_utils.h"
 
 DEFINE_uint32(proactor_threads, 0, "Number of io threads in the pool");
-DEFINE_bool(proactor_reuse_wq, true, "If true reuses the same work-queue for all io_urings "
+
+// TODO: To fix proactor_reuse_wq
+DEFINE_bool(proactor_reuse_wq, false, "If true reuses the same work-queue for all io_urings "
                                      "in the pool");
 
 using namespace std;
