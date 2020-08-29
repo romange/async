@@ -204,19 +204,35 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
 
   error_code ec;
 
-  fd_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  fd_ = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, IPPROTO_TCP);
   if (posix_err_wrap(fd_, &ec) < 0)
     return ec;
 
   if (p_->HasSqPoll()) {
     LOG(FATAL) << "Not supported with SQPOLL, TBD";
   }
-  fd_ = p_->RegisterFd(fd_);
+  unsigned dense_id = p_->RegisterFd(fd_);
+  IoResult io_res;
 
-  FiberCall fc(p_);
-  fc->PrepConnect(fd_, ep.data(), ep.size());
+  if (p_->HasFastPoll()) {
+    FiberCall fc(p_);
+    fc->PrepConnect(dense_id, ep.data(), ep.size());
+    io_res = fc.Get();
+  } else {
+    int res = connect(fd_, ep.data(), ep.size());
+    if (res == 0) {
+      return ec;
+    }
 
-  IoResult io_res = fc.Get();
+    if (errno != EINPROGRESS) {
+      return error_code{errno, system::system_category()};
+    }
+
+    FiberCall fc(p_);
+    fc->PrepPollAdd(dense_id, POLLOUT | POLLIN | POLLERR);
+    io_res = fc.Get();
+  }
+
   if (io_res < 0) {  // In that case connect returns -errno.
     if (close(fd_) < 0) {
       LOG(WARNING) << "Could not close fd " << strerror(errno);

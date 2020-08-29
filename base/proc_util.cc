@@ -4,6 +4,7 @@
 #include "base/proc_util.h"
 
 #include <spawn.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -27,30 +28,6 @@ static size_t find_nth(absl::string_view str, char c, uint32_t index) {
     }
   }
   return absl::string_view::npos;
-}
-
-static std::once_flag cpu_once;
-
-static int CPU_NUM = 0;
-
-static void InitCpuInfo() {
-  FILE* f = fopen("/proc/cpuinfo", "r");
-  const char kModelNameLine[] = "model name";
-  if (f == NULL) {
-    return;
-  }
-  char line[1000];
-  while (fgets(line, sizeof(line), f) != NULL) {
-    const char* sep = strchr(line, ':');
-    if (sep == NULL) {
-      continue;
-    }
-    absl::string_view str(line, sep - line);
-    str = absl::StripAsciiWhitespace(str);
-    if (str == kModelNameLine)
-      ++CPU_NUM;
-  }
-  fclose(f);
 }
 
 // Runs a child process efficiently.
@@ -138,9 +115,13 @@ ProcessStats ProcessStats::Read() {
 
 namespace sys {
 
-unsigned int NumCPUs() {
-  std::call_once(cpu_once, InitCpuInfo);
-  return CPU_NUM;
+void GetKernelVersion(KernelVersion* version) {
+  struct utsname buffer;
+
+  CHECK_EQ(0, uname(&buffer));
+
+  CHECK_EQ(4, sscanf(buffer.release, "%u.%u.%u-%u", &version->kernel, &version->major,
+                     &version->minor, &version->patch));
 }
 
 }  // namespace sys

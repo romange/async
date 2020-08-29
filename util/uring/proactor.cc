@@ -15,6 +15,7 @@
 #include "absl/base/attributes.h"
 #include "absl/time/clock.h"
 #include "base/logging.h"
+#include "base/proc_util.h"
 #include "util/uring/uring_fiber_algo.h"
 
 DEFINE_bool(proactor_register_fd, false, "If true tries to register file destricptors");
@@ -114,7 +115,7 @@ unsigned IoRingPeek(const io_uring& ring, io_uring_cqe* cqes, unsigned count) {
 
 constexpr uint64_t kIgnoreIndex = 0;
 // constexpr uint64_t kWakeIndex = 1;
-constexpr uint64_t kNopIndex  = 2;
+constexpr uint64_t kNopIndex = 2;
 constexpr uint64_t kUserDataCbIndex = 1024;
 constexpr uint32_t kSpinLimit = 200;
 
@@ -282,6 +283,12 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   CHECK_GE(ring_size, 8U);
   CHECK_EQ(0U, thread_id_) << "Init was already called";
 
+  base::sys::KernelVersion kver;
+  base::sys::GetKernelVersion(&kver);
+
+  CHECK(kver.kernel > 5 || (kver.kernel = 5 && kver.major >= 4))
+      << "Versions 5.4 or higher are supported";
+
   io_uring_params params;
   memset(&params, 0, sizeof(params));
 
@@ -341,8 +348,6 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   CHECK_EQ(ring_size, params.sq_entries);  // Sanity.
 
   CheckForTimeoutSupport();
-
-  // ArmWakeupEvent();
 
   centries_.resize(params.sq_entries);  // .val = -1
   next_free_ce_ = 0;

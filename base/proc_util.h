@@ -22,7 +22,14 @@ struct ProcessStats {
 };
 
 namespace sys {
-  unsigned int NumCPUs();
+  struct KernelVersion {
+    unsigned kernel;
+    unsigned major;
+    unsigned minor;
+    unsigned patch;
+  };
+
+  void GetKernelVersion(KernelVersion* version);
 }  // namespace sys
 
 // Runs sh with the command. Returns 0 if succeeded. Child status is ignored.
