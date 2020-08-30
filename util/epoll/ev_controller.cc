@@ -16,7 +16,7 @@
 #include "absl/time/clock.h"
 #include "base/logging.h"
 #include "base/proc_util.h"
-
+#include "util/epoll/epoll_fiber_scheduler.h"
 
 #define EV_CHECK(x)                                                           \
   do {                                                                           \
@@ -97,8 +97,9 @@ EvController::EvController() : task_queue_(128) {
 EvController::~EvController() {
   CHECK(is_stopped_);
   close(event_fd_);
-
   close(epoll_fd_);
+
+  DVLOG(1) << "~EvController";
 
   signal_state* ss = get_signal_state();
   for (size_t i = 0; i < ABSL_ARRAYSIZE(ss->signal_map); ++i) {
@@ -121,9 +122,9 @@ void EvController::Run() {
   main_loop_ctx_ = fibers::context::active();
   fibers::scheduler* sched = main_loop_ctx_->get_scheduler();
 
-  //UringFiberAlgo* scheduler = new UringFiberAlgo(this);
-  //sched->set_algo(scheduler);
-  //this_fiber::properties<UringFiberProps>().set_name("ioloop");
+  EpollFiberAlgo* algo = new EpollFiberAlgo(this);
+  sched->set_algo(algo);
+  this_fiber::properties<EpollFiberProps>().set_name("ioloop");
 
   is_stopped_ = false;
 
@@ -206,12 +207,12 @@ void EvController::Run() {
       DVLOG(2) << "Resume ioloop";
       spin_loops = 0;
     }
+    ++spin_loops;
   }
 
   VLOG(1) << "wakeups/stalls: " << tq_wakeups_.load() << "/" << num_stalls;
 
   VLOG(1) << "centries size: " << centries_.size();
-  centries_.clear();
 }
 
 unsigned EvController::Arm(int fd, CbType cb, uint32_t event_mask) {
@@ -227,7 +228,7 @@ unsigned EvController::Arm(int fd, CbType cb, uint32_t event_mask) {
 
   auto& e = centries_[next_free_ce_];
   DCHECK(!e.cb);  // cb is undefined.
-  DVLOG(1) << "GetSubmitEntry: index: " << next_free_ce_;
+  DVLOG(1) << "Arm: index: " << next_free_ce_;
 
   unsigned ret = next_free_ce_;
   next_free_ce_ = e.index;
@@ -263,7 +264,11 @@ void EvController::Init() {
   thread_id_ = pthread_self();
   tl_info_.is_ev_thread = true;
 
-  Arm(event_fd_, nullptr, EPOLLIN);
+  Arm(event_fd_, [ev_fd = event_fd_](uint32_t mask, auto*) {
+    DVLOG(1) << "EventFdCb called " << mask;
+    uint64_t val;
+    CHECK_EQ(8, read(ev_fd, &val, sizeof(val)));
+  }, EPOLLIN);
 }
 
 void EvController::DoWake() {
@@ -340,5 +345,5 @@ void EvController::RegrowCentries() {
 }
 
 
-}  // namespace uring
+}  // namespace epoll
 }  // namespace util
