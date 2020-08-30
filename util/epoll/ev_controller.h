@@ -23,7 +23,7 @@ struct epoll_event;
 namespace util {
 namespace epoll {
 
-class EvControllerPool;
+class EpollFiberAlgo;
 
 class EvController {
   EvController(const EvController&) = delete;
@@ -75,14 +75,15 @@ class EvController {
     return tl_info_.ev_index;
   }
 
-  // Internal, used by EvControllerPool
   static void SetIndex(uint32_t index) {
     tl_info_.ev_index = index;
   }
 
 
-  void Arm(CbType cb, int fd, uint32_t event_mask);
-  
+  unsigned Arm(int fd, CbType cb,  uint32_t event_mask);
+  void UpdateCb(unsigned arm_index, CbType cb);
+  void Disarm(unsigned arm_index);
+
   /**
    *  Message passing functions.
    * */
@@ -185,7 +186,7 @@ class EvController {
   EventCount task_queue_avail_;
   ::boost::fibers::context* main_loop_ctx_ = nullptr;
 
-  friend class UringFiberAlgo;
+  friend class EpollFiberAlgo;
 
   struct CompletionEntry {
     CbType cb;

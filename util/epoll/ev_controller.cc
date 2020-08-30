@@ -214,29 +214,41 @@ void EvController::Run() {
   centries_.clear();
 }
 
-void EvController::Arm(CbType cb, int fd, uint32_t event_mask) {
+unsigned EvController::Arm(int fd, CbType cb, uint32_t event_mask) {
   epoll_event ev;
   ev.events = event_mask;
-  if (cb) {
-    if (next_free_ce_ < 0) {
-      RegrowCentries();
-      CHECK_GT(next_free_ce_, 0);
-    }
-
-    ev.data.u32 = next_free_ce_ + kUserDataCbIndex;
-    DCHECK_LT(unsigned(next_free_ce_), centries_.size());
-
-    auto& e = centries_[next_free_ce_];
-    DCHECK(!e.cb);  // cb is undefined.
-    DVLOG(1) << "GetSubmitEntry: index: " << next_free_ce_;
-
-    next_free_ce_ = e.index;
-    e.cb = std::move(cb);
-    e.index = -1;
-  } else {
-    ev.data.u32 = kIgnoreIndex;
+  if (next_free_ce_ < 0) {
+    RegrowCentries();
+    CHECK_GT(next_free_ce_, 0);
   }
+
+  ev.data.u32 = next_free_ce_ + kUserDataCbIndex;
+  DCHECK_LT(unsigned(next_free_ce_), centries_.size());
+
+  auto& e = centries_[next_free_ce_];
+  DCHECK(!e.cb);  // cb is undefined.
+  DVLOG(1) << "GetSubmitEntry: index: " << next_free_ce_;
+
+  unsigned ret = next_free_ce_;
+  next_free_ce_ = e.index;
+  e.cb = std::move(cb);
+  e.index = -1;
+
   CHECK_EQ(0, epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev));
+  return ret;
+}
+
+void EvController::UpdateCb(unsigned arm_index, CbType cb) {
+  CHECK_LT(arm_index, centries_.size());
+  centries_[arm_index].cb = cb;
+}
+
+void EvController::Disarm(unsigned arm_index) {
+  CHECK_LT(arm_index, centries_.size());
+  centries_[arm_index].cb = nullptr;
+  centries_[arm_index].index = next_free_ce_;
+
+  next_free_ce_ = arm_index;
 }
 
 void EvController::Init() {
@@ -251,7 +263,7 @@ void EvController::Init() {
   thread_id_ = pthread_self();
   tl_info_.is_ev_thread = true;
 
-  Arm(nullptr, event_fd_, EPOLLIN);
+  Arm(event_fd_, nullptr, EPOLLIN);
 }
 
 void EvController::DoWake() {
