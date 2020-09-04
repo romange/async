@@ -224,7 +224,6 @@ class ProactorPool {
   enum State { STOPPED, RUN } state_ = STOPPED;
 };
 
-constexpr size_t foo = sizeof(ProactorPool);
 
 }  // namespace uring
 }  // namespace util

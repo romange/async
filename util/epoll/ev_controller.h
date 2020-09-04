@@ -24,6 +24,7 @@ namespace util {
 namespace epoll {
 
 class EpollFiberAlgo;
+class EvPool;
 
 class EvController {
   EvController(const EvController&) = delete;
@@ -73,10 +74,6 @@ class EvController {
   // from EvController thread. Returns -1 if called from some other thread.
   static int32_t GetIndex() {
     return tl_info_.ev_index;
-  }
-
-  static void SetIndex(uint32_t index) {
-    tl_info_.ev_index = index;
   }
 
 
@@ -166,6 +163,11 @@ class EvController {
   void RegrowCentries();
   void ArmWakeupEvent();
 
+  static void SetIndex(uint32_t index) {
+    tl_info_.ev_index = index;
+  }
+
+
   pthread_t thread_id_ = 0U;
 
   int event_fd_ = -1, epoll_fd_ = -1;
@@ -187,6 +189,7 @@ class EvController {
   ::boost::fibers::context* main_loop_ctx_ = nullptr;
 
   friend class EpollFiberAlgo;
+  friend class EvPool;
 
   struct CompletionEntry {
     CbType cb;
