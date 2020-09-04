@@ -15,11 +15,6 @@ namespace epoll {
 using namespace boost;
 using namespace std;
 
-static void WakeMyFiber(uint32_t event_mask, EvController*) {
-  DVLOG(1) << "this_fiber::yield " << event_mask;
-
-  this_fiber::yield();
-}
 
 EpollFiberAlgo::EpollFiberAlgo(EvController* ev_cntr) : ev_cntrl_(ev_cntr) {
   main_cntx_ = fibers::context::active();
@@ -28,7 +23,15 @@ EpollFiberAlgo::EpollFiberAlgo(EvController* ev_cntr) : ev_cntrl_(ev_cntr) {
   timer_fd_ = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
   CHECK_GE(timer_fd_, 0);
 
-  arm_index_ = ev_cntrl_->Arm(timer_fd_, &WakeMyFiber, EPOLLIN);
+  auto cb = [tfd = timer_fd_](uint32_t event_mask, EvController*) {
+    uint64_t val;
+    int res = read(tfd, &val, sizeof(val));
+    DVLOG(2) << "this_fiber::yield " << event_mask << "/" << res;
+
+    this_fiber::yield();
+  };
+
+  arm_index_ = ev_cntrl_->Arm(timer_fd_, std::move(cb), EPOLLIN);
 }
 
 EpollFiberAlgo::~EpollFiberAlgo() {

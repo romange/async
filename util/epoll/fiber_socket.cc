@@ -2,68 +2,34 @@
 // Author: Roman Gershman (romange@gmail.com)
 //
 
-#include "util/uring/fiber_socket.h"
+#include "util/epoll/fiber_socket.h"
 
 #include <netinet/in.h>
-#include <sys/poll.h>
-
-#include <boost/fiber/context.hpp>
+#include <sys/epoll.h>
 
 #include "base/logging.h"
 #include "base/stl_util.h"
-#include "util/uring/proactor.h"
+#include "util/epoll/ev_controller.h"
 
 #define VSOCK(verbosity) VLOG(verbosity) << "sock[" << native_handle() << "] "
 #define DVSOCK(verbosity) DVLOG(verbosity) << "sock[" << native_handle() << "] "
 
 namespace util {
-namespace uring {
+namespace epoll {
 
 using namespace std;
 using namespace boost;
-using IoResult = Proactor::IoResult;
 
 namespace {
 
-class FiberCall {
-  SubmitEntry se_;
-  fibers::context* me_;
-  IoResult io_res_;
 
- public:
-  FiberCall(Proactor* proactor) : me_(fibers::context::active()), io_res_(0) {
-    register_fd_ = proactor->HasRegisterFd();
-
-    auto waker = [this](IoResult res, int32_t, Proactor* mgr) {
-      io_res_ = res;
-      fibers::context::active()->schedule(me_);
-    };
-    se_ = proactor->GetSubmitEntry(std::move(waker), 0);
-  }
-
-  ~FiberCall() {
-    CHECK(!me_) << "Get was not called!";
-  }
-
-  SubmitEntry* operator->() {
-    return &se_;
-  }
-
-  IoResult Get() {
-    se_.sqe()->flags |= (register_fd_ ? IOSQE_FIXED_FILE : 0);
-    me_->suspend();
-    me_ = nullptr;
-
-    return io_res_;
-  }
-
- private:
-  bool register_fd_;
-};
+inline FiberSocket::error_code from_errno() {
+  return FiberSocket::error_code(errno, std::system_category());
+}
 
 inline ssize_t posix_err_wrap(ssize_t res, FiberSocket::error_code* ec) {
   if (res == -1) {
-    *ec = FiberSocket::error_code(errno, std::system_category());
+    *ec = from_errno();
   } else if (res < 0) {
     LOG(WARNING) << "Bad posix error " << res;
   }
@@ -100,9 +66,8 @@ auto FiberSocket::Shutdown(int how) -> error_code {
   error_code ec;
   if (fd_ & IS_SHUTDOWN)
     return ec;
-  int fd = RealFd();
 
-  posix_err_wrap(::shutdown(fd, how), &ec);
+  posix_err_wrap(::shutdown(fd_, how), &ec);
   fd_ |= IS_SHUTDOWN;  // Enter shutdown state unrelated to the success of the call.
 
   return ec;
@@ -113,8 +78,8 @@ auto FiberSocket::Close() -> error_code {
   if (fd_ >= 0) {
     DVSOCK(1) << "Closing socket";
 
-    int fd = RealFd();
-    p_->UnregisterFd(fd_ & FD_MASK);
+    int fd = fd_ & FD_MASK;
+    p_->Disarm(arm_index_);
     posix_err_wrap(::close(fd), &ec);
     fd_ = -1;
   }
@@ -154,12 +119,13 @@ auto FiberSocket::Listen(unsigned port, unsigned backlog, uint32_t sock_opts_mas
   return ec;
 }
 
-void FiberSocket::SetProactor(Proactor* p) {
+void FiberSocket::SetController(EvController* p) {
   CHECK(p_ == nullptr);
   p_ = p;
 
   if (fd_ >= 0) {
-    fd_ = p->RegisterFd(fd_ & FD_MASK);
+    auto cb = [this](uint32 mask, EvController* cntr) { Wakey(mask, cntr); };
+    arm_index_ = p->Arm(fd_ & FD_MASK, std::move(cb), EPOLLIN);
   }
 }
 
@@ -171,31 +137,29 @@ auto FiberSocket::Accept(FiberSocket* peer) -> error_code {
 
   error_code ec;
 
-  int real_fd = RealFd();
+  int real_fd = fd_ & FD_MASK;
+
+  current_context_ = fibers::context::active();
+
   while (true) {
     int res =
         accept4(real_fd, (struct sockaddr*)&client_addr, &addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
     if (res >= 0) {
       *peer = FiberSocket{res};
-      return ec;
+      break;
     }
 
     DCHECK_EQ(-1, res);
 
-    if (errno == EAGAIN) {
-      FiberCall fc(p_);
-      fc->PrepPollAdd(fd_ & FD_MASK, POLLIN);
-      IoResult io_res = fc.Get();
-
-      if (io_res == POLLERR) {
-        return system::errc::make_error_code(system::errc::connection_aborted);
-      }
-      continue;
+    if (errno != EAGAIN) {
+      ec = from_errno();
+      break;
     }
 
-    posix_err_wrap(res, &ec);
-    return ec;
+    current_context_->suspend();
   }
+  current_context_ = nullptr;
+  return ec;
 }
 
 auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
@@ -208,37 +172,29 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
   if (posix_err_wrap(fd_, &ec) < 0)
     return ec;
 
-  if (p_->HasSqPoll()) {
-    LOG(FATAL) << "Not supported with SQPOLL, TBD";
-  }
-  unsigned dense_id = p_->RegisterFd(fd_);
-  IoResult io_res;
+  auto cb = [this](uint32 mask, EvController* cntr) { Wakey(mask, cntr); };
+  arm_index_ = p_->Arm(fd_, std::move(cb), EPOLLIN);
+  current_context_ = fibers::context::active();
 
-  if (p_->HasFastPoll()) {
-    FiberCall fc(p_);
-    fc->PrepConnect(dense_id, ep.data(), ep.size());
-    io_res = fc.Get();
-  } else {
+  while (true) {
     int res = connect(fd_, ep.data(), ep.size());
     if (res == 0) {
-      return ec;
+      break;
     }
 
     if (errno != EINPROGRESS) {
-      return error_code{errno, system::system_category()};
+      ec = from_errno();
+      break;
     }
-
-    FiberCall fc(p_);
-    fc->PrepPollAdd(dense_id, POLLOUT | POLLIN | POLLERR);
-    io_res = fc.Get();
+    current_context_->suspend();
   }
+  current_context_ = nullptr;
 
-  if (io_res < 0) {  // In that case connect returns -errno.
+  if (ec) {
     if (close(fd_) < 0) {
       LOG(WARNING) << "Could not close fd " << strerror(errno);
     }
     fd_ = -1;
-    ec = error_code(-io_res, system::system_category());
   }
   return ec;
 }
@@ -251,7 +207,7 @@ auto FiberSocket::LocalEndpoint() const -> endpoint_type {
   socklen_t addr_len = endpoint.capacity();
   error_code ec;
 
-  posix_err_wrap(::getsockname(RealFd(), endpoint.data(), &addr_len), &ec);
+  posix_err_wrap(::getsockname(fd_ & FD_MASK, endpoint.data(), &addr_len), &ec);
   CHECK(!ec) << ec << "/" << ec.message() << " while running getsockname";
 
   endpoint.resize(addr_len);
@@ -266,7 +222,7 @@ auto FiberSocket::RemoteEndpoint() const -> endpoint_type {
   socklen_t addr_len = endpoint.capacity();
   error_code ec;
 
-  if (getpeername(RealFd(), endpoint.data(), &addr_len) == 0)
+  if (getpeername(fd_ & FD_MASK, endpoint.data(), &addr_len) == 0)
     endpoint.resize(addr_len);
 
   return endpoint;
@@ -288,28 +244,35 @@ auto FiberSocket::Send(const iovec* ptr, size_t len) -> expected_size_t {
 
   ssize_t res;
   int fd = fd_ & FD_MASK;
+  current_context_ = fibers::context::active();
 
   while (true) {
-    FiberCall fc(p_);
-    fc->PrepSendMsg(fd, &msg, MSG_NOSIGNAL);
-    res = fc.Get();  // Interrupt point
+    res = sendmsg(fd, &msg, MSG_NOSIGNAL);
     if (res >= 0) {
-      return res;  // Fastpath
+      current_context_ = nullptr;
+      return res;
     }
-    DVSOCK(1) << "Got " << res;
-    res = -res;
-    if (res == EAGAIN || res == EBUSY)
-      continue;
 
-    if (base::_in(res, {ECONNABORTED, EPIPE, ECONNRESET})) {
-      if (res == EPIPE)  // We do not care about EPIPE that can happen when we shutdown our socket.
-        res = ECONNABORTED;
+    DCHECK_EQ(res, -1);
+    res = errno;
+
+    if (res != EAGAIN) {
       break;
     }
+    current_context_->suspend();
+  }
 
+  current_context_ = nullptr;
+
+  // Error handling - finale part.
+  if (!base::_in(res, {ECONNABORTED, EPIPE, ECONNRESET})) {
     LOG(FATAL) << "Unexpected error " << res << "/" << strerror(res);
   }
-  std::error_code ec(res, std::generic_category());
+
+  if (res == EPIPE)  // We do not care about EPIPE that can happen when we shutdown our socket.
+    res = ECONNABORTED;
+
+  std::error_code ec(res, std::system_category());
   VSOCK(1) << "Error " << ec << " on " << RemoteEndpoint();
 
   return nonstd::make_unexpected(std::move(ec));
@@ -328,59 +291,52 @@ auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
   memset(&msg, 0, sizeof(msg));
   msg.msg_iov = const_cast<iovec*>(ptr);
   msg.msg_iovlen = len;
-  int fd = fd_ & FD_MASK;
 
-  // There is a possible data-race bug since GetSubmitEntry can preempt inside
-  // FiberCall, thus introducing a chain with random SQE not from here.
-  //
-  // The bug is not really interesting in this context here since we handle the use-case of old
-  // kernels without fast-poll, however it's problematic for transactions that require SQE chains.
-  // Added TODO to proactor.h
-  if (!p_->HasFastPoll()) {
-    DVSOCK(1) << "POLLIN";
-    auto cb = [this](IoResult res, int32_t, Proactor* mgr) {
-      DVSOCK(1) << "POLLING RES " << res;
-    };
-    SubmitEntry se = p_->GetSubmitEntry(std::move(cb), 0);
-    se.PrepPollAdd(fd, POLLIN);
-    se.sqe()->flags |= IOSQE_IO_LINK;
-  }
+  int fd = fd_ & FD_MASK;
+  current_context_ = fibers::context::active();
 
   ssize_t res;
   while (true) {
-    FiberCall fc(p_);
-    fc->PrepRecvMsg(fd, &msg, 0);
-    res = fc.Get();
-
-    if (res > 0) {
+    res = recvmsg(fd, &msg, 0);
+    if (res > 0) {  // if res is 0, that means a peer closed the socket.
+      current_context_ = nullptr;
       return res;
     }
-    DVSOCK(1) << "Got " << res;
 
-    res = -res;
-    if (res == EAGAIN || res == EBUSY)
-      continue;
-
-    if (res == 0)
-      res = ECONNABORTED;
-
-    if (base::_in(res, {ECONNABORTED, EPIPE, ECONNRESET})) {
+    if (res == 0 || errno != EAGAIN) {
       break;
     }
 
+    current_context_->suspend();
+  }
+
+  current_context_ = nullptr;
+
+  // Error handling - finale part.
+  if (res == 0) {
+    res = ECONNABORTED;
+  } else {
+    DCHECK_EQ(-1, res);
+    res = errno;
+  }
+
+  DVSOCK(1) << "Got " << res;
+
+  if (!base::_in(res, {ECONNABORTED, EPIPE, ECONNRESET})) {
     LOG(FATAL) << "sock[" << fd << "] Unexpected error " << res << "/" << strerror(res);
   }
+
   std::error_code ec(res, std::system_category());
   VSOCK(1) << "Error " << ec << " on " << RemoteEndpoint();
-  expected_size_t es;
-  es.operator bool();
 
   return nonstd::make_unexpected(std::move(ec));
 }
 
-inline int FiberSocket::RealFd() const {
-  return p_ ? p_->TranslateFixedFd(fd_ & FD_MASK) : fd_ & FD_MASK;
+void FiberSocket::Wakey(uint32_t ev_mask, EvController* cntr) {
+  DVLOG(2) << "Wakey " << ev_mask;
+  if (current_context_)
+    fibers::context::active()->schedule(current_context_);
 }
 
-}  // namespace uring
+}  // namespace epoll
 }  // namespace util

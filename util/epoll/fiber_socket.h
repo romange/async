@@ -4,20 +4,18 @@
 
 #pragma once
 
-#include <liburing/io_uring.h>
-
 // for tcp::endpoint. Consider introducing our own.
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/fiber/context.hpp>
 
 #include "absl/base/attributes.h"
 #include "util/sync_stream_interface.h"
 
 namespace util {
-namespace uring {
+namespace epoll {
 
-class Proactor;
-
+class EvController;
 class FiberSocket : public SyncStreamInterface {
   FiberSocket(const FiberSocket&) = delete;
   void operator=(const FiberSocket&) = delete;
@@ -80,8 +78,6 @@ class FiberSocket : public SyncStreamInterface {
     fd_ = -1;
   }
 
-  int RealFd() const;
-
   endpoint_type LocalEndpoint() const;
   endpoint_type RemoteEndpoint() const;
 
@@ -91,9 +87,9 @@ class FiberSocket : public SyncStreamInterface {
     return fd_ >= 0 && (fd_ & IS_SHUTDOWN) == 0;
   }
 
-  void SetProactor(Proactor* p);
+  void SetController(EvController* p);
 
-  Proactor* proactor() { return p_; }
+  EvController* ev_controller() { return p_; }
 
   static bool IsConnClosed(const error_code& ec) {
     return (ec == std::errc::connection_aborted) || (ec == std::errc::connection_reset);
@@ -104,12 +100,16 @@ class FiberSocket : public SyncStreamInterface {
   enum { FD_MASK = 0x1fffffff };
   enum { IS_SHUTDOWN = 0x20000000 };
 
-  int32_t fd_;
+  void Wakey(uint32_t masl, EvController* cntr);
 
+  int32_t fd_;
+  int arm_index_ = -1;
+
+  ::boost::fibers::context* current_context_ = nullptr;
   // We must reference proactor in each socket so that we could support write_some/read_some
   // with predefined interfance and be compliant with SyncWriteStream/SyncReadStream concepts.
-  Proactor* p_;
+  EvController* p_;
 };
 
-}  // namespace uring
+}  // namespace epoll
 }  // namespace util

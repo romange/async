@@ -57,5 +57,77 @@ TEST_F(EvControllerTest, AsyncCall) {
   usleep(5000);
 }
 
+
+TEST_F(EvControllerTest, Await) {
+  thread_local int val = 5;
+
+  ev_cntrl_->AwaitBrief([] { val = 15; });
+  EXPECT_EQ(5, val);
+
+  int j = ev_cntrl_->AwaitBrief([] { return val; });
+  EXPECT_EQ(15, j);
+}
+
+TEST_F(EvControllerTest, Sleep) {
+  ev_cntrl_->AwaitBlocking([] {
+    LOG(INFO) << "Before Sleep";
+    this_fiber::sleep_for(20ms);
+    LOG(INFO) << "After Sleep";
+  });
+}
+
+TEST_F(EvControllerTest, DispatchTest) {
+  fibers::condition_variable cnd1, cnd2;
+  fibers::mutex mu;
+  int state = 0;
+
+  LOG(INFO) << "LaunchFiber";
+  auto fb = ev_cntrl_->LaunchFiber([&] {
+    this_fiber::properties<EpollFiberProps>().set_name("jessie");
+
+    std::unique_lock<fibers::mutex> g(mu);
+    state = 1;
+    LOG(INFO) << "state 1";
+
+    cnd2.notify_one();
+    cnd1.wait(g, [&] { return state == 2; });
+    LOG(INFO) << "End";
+  });
+
+  {
+    std::unique_lock<fibers::mutex> g(mu);
+    cnd2.wait(g, [&] { return state == 1; });
+    state = 2;
+    LOG(INFO) << "state 2";
+    cnd1.notify_one();
+  }
+  LOG(INFO) << "BeforeJoin";
+  fb.join();
+}
+
+void BM_AsyncCall(benchmark::State& state) {
+  EvController proactor;
+  std::thread t([&] { proactor.Run(); });
+
+  while (state.KeepRunning()) {
+    proactor.AsyncBrief([] {});
+  }
+  proactor.Stop();
+  t.join();
+}
+BENCHMARK(BM_AsyncCall);
+
+void BM_AwaitCall(benchmark::State& state) {
+  EvController proactor;
+  std::thread t([&] { proactor.Run(); });
+
+  while (state.KeepRunning()) {
+    proactor.AwaitBrief([] {});
+  }
+  proactor.Stop();
+  t.join();
+}
+BENCHMARK(BM_AwaitCall);
+
 }  // namespace epoll
 }  // namespace util
