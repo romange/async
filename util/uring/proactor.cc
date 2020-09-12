@@ -114,8 +114,8 @@ unsigned IoRingPeek(const io_uring& ring, io_uring_cqe* cqes, unsigned count) {
 }
 
 constexpr uint64_t kIgnoreIndex = 0;
-// constexpr uint64_t kWakeIndex = 1;
-constexpr uint64_t kNopIndex = 2;
+constexpr uint64_t kWakeIndex = 1;
+
 constexpr uint64_t kUserDataCbIndex = 1024;
 constexpr uint32_t kSpinLimit = 200;
 
@@ -124,10 +124,10 @@ constexpr uint32_t kSpinLimit = 200;
 thread_local Proactor::TLInfo Proactor::tl_info_;
 
 Proactor::Proactor() : task_queue_(128) {
-  /*wake_fd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+  wake_fd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
   CHECK_GE(wake_fd_, 0);
   VLOG(1) << "Created wake_fd is " << wake_fd_;
-*/
+
   volatile ctx::fiber dummy;  // For some weird reason I need this to pull
                               // boost::context into linkage.
 }
@@ -137,10 +137,9 @@ Proactor::~Proactor() {
   if (thread_id_ != -1U) {
     io_uring_queue_exit(&ring_);
   }
-  /*VLOG(1) << "Closing wake_fd " << wake_fd_ << " ring fd: " << ring_.ring_fd;
+  VLOG(1) << "Closing wake_fd " << wake_fd_ << " ring fd: " << ring_.ring_fd;
 
   close(wake_fd_);
-*/
 
   signal_state* ss = get_signal_state();
   for (size_t i = 0; i < ABSL_ARRAYSIZE(ss->signal_map); ++i) {
@@ -253,9 +252,9 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
     /**
      * If tq_seq_ has changed since it was cached into tq_seq, then
      * EmplaceTaskQueue succeeded and we might have more tasks to execute - lets
-     * run the loop again. Otherwise, set tq_seq_ to WAIT_SECTION, hinting that
+     * run the loop again. Otherwise, set tq_seq_ to WAIT_SECTION_STATE, hinting that
      * we are going to stall now. Other threads will need to wake-up the ring
-     * (see WakeRing()) but only the they will actually syscall only once.
+     * (see WakeRing()) but only one will actually call the syscall.
      */
     if (tq_seq_.compare_exchange_weak(tq_seq, WAIT_SECTION_STATE, std::memory_order_acquire)) {
       if (is_stopped_)
@@ -315,12 +314,12 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   fast_poll_f_ = (params.features & IORING_FEAT_FAST_POLL) != 0;
   sqpoll_f_ = (params.flags & IORING_SETUP_SQPOLL) != 0;
 
-  // wake_fixed_fd_ = wake_fd_;
+  wake_fixed_fd_ = wake_fd_;
   register_fd_ = FLAGS_proactor_register_fd;
   if (register_fd_) {
     register_fds_.resize(64, -1);
-    // register_fds_[0] = wake_fd_;
-    // wake_fixed_fd_ = 0;
+    register_fds_[0] = wake_fd_;
+    wake_fixed_fd_ = 0;
 
     absl::Time start = absl::Now();
     int res = io_uring_register_files(&ring_, register_fds_.data(), register_fds_.size());
@@ -348,7 +347,7 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   CHECK_EQ(ring_size, params.sq_entries);  // Sanity.
 
   CheckForTimeoutSupport();
-
+  ArmWakeupEvent();
   centries_.resize(params.sq_entries);  // .val = -1
   next_free_ce_ = 0;
   for (size_t i = 0; i < centries_.size() - 1; ++i) {
@@ -364,19 +363,21 @@ void Proactor::WakeRing() {
 
   tq_wakeups_.fetch_add(1, std::memory_order_relaxed);
 
-  // It's save to call io_uring_get_sqe because tq_seq_ ensures that noone else does it.
-  // If we would use io_uring_wait_cqe liburing function during the wait call
-  // we would create a data race. However we do not do it and we directly block on kernel in
-  // out implementation of wait_for_cqe. Therefore, it should be safe to call both
-  // io_uring_get_sqe and io_uring_submit.
-  io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
-  CHECK(sqe);
-  io_uring_prep_nop(sqe);
-  sqe->user_data = kNopIndex;
-  int res = io_uring_submit(&ring_);
-  CHECK_EQ(1, res);
-  // We also must submit nop. That's a bit more complicated since
-  // CHECK_EQ(8, write(wake_fd_, &val, sizeof(uint64_t)));
+  /**
+   * It's tempting to use io_uring_prep_nop() here in order to resume wait_cqe() call.
+   * However, it's not that staightforward. io_uring_get_sqe and io_uring_submit
+   * are not thread-safe and this function is called from another thread.
+   * Even though tq_seq_ == WAIT_SECTION_STATE ensured that Proactor thread
+   * is going to stall we can not guarantee that it will not wake up before we reach the next line.
+   * In that case, Proactor loop will continue and both threads could call
+   * io_uring_get_sqe and io_uring_submit at the same time. This will cause data-races.
+   * It's possible to fix this by guarding with spinlock the section below as well as
+   * the section after the wait_cqe() call but I think it's overcomplicated and not worth it.
+   * Therefore we gonna stick with event_fd descriptor to wake up Proactor thread.
+   */
+
+  uint64_t val = 1;
+  CHECK_EQ(8, write(wake_fd_, &val, sizeof(uint64_t)));
 }
 
 void Proactor::DispatchCompletions(io_uring_cqe* cqes, unsigned count) {
@@ -403,9 +404,20 @@ void Proactor::DispatchCompletions(io_uring_cqe* cqes, unsigned count) {
       continue;
     }
 
-    if (cqe.user_data == kIgnoreIndex || kNopIndex)
+    if (cqe.user_data == kIgnoreIndex)
       continue;
 
+    if (cqe.user_data == kWakeIndex) {
+      // We were woken up. Need to rearm wake_fd_ poller.
+      DCHECK_GE(cqe.res, 0);
+      DVLOG(1) << "Wakeup " << cqe.res << "/" << cqe.flags;
+
+      CHECK_EQ(8, read(wake_fd_, &cqe.user_data, 8));  // Pull the data
+
+      // TODO: to move io_uring_get_sqe call from here to before we stall.
+      ArmWakeupEvent();
+      continue;
+    }
     LOG(ERROR) << "Unrecognized user_data " << cqe.user_data;
   }
 }
@@ -485,7 +497,6 @@ void Proactor::RegrowCentries() {
     centries_[prev].val = prev + 1;
 }
 
-#if 0
 void Proactor::ArmWakeupEvent() {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
   CHECK_NOTNULL(sqe);
@@ -494,7 +505,7 @@ void Proactor::ArmWakeupEvent() {
   sqe->user_data = kWakeIndex;
   sqe->flags |= (register_fd_ ? IOSQE_FIXED_FILE : 0);
 }
-#endif
+
 
 unsigned Proactor::RegisterFd(int source_fd) {
   if (!register_fd_)
