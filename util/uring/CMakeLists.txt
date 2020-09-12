@@ -6,4 +6,3 @@ cxx_link(uring_fiber_lib http_common base absl::flat_hash_map Boost::fiber TRDP:
 
 cxx_test(proactor_test uring_fiber_lib)
 cxx_test(accept_server_test uring_fiber_lib)
-#http_beast_prebuilt

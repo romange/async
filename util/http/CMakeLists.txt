@@ -2,7 +2,7 @@ add_library(http_beast_prebuilt prebuilt_beast.cc)
 cxx_link(http_beast_prebuilt Boost::system)
 
 add_library(http_common http_common.cc status_page.cc profilez_handler.cc)
-cxx_link(http_common absl_strings base http_beast_prebuilt TRDP::gperf)
+cxx_link(http_common absl::strings absl::time base http_beast_prebuilt TRDP::gperf)
 
 add_executable(http_main http_main.cc)
 cxx_link(http_main uring_fiber_lib html_lib)

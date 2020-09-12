@@ -9,7 +9,6 @@
 
 #include "base/gtest.h"
 #include "base/logging.h"
-#include "base/walltime.h"
 
 namespace base {
 

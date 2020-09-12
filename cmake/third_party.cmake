@@ -256,7 +256,9 @@ add_third_party(
                     -DRAPIDJSON_BUILD_DOC=OFF"
   LIB "none"
 )
+
 add_library(TRDP::rapidjson INTERFACE IMPORTED)
 add_dependencies(TRDP::rapidjson rapidjson_project)
 set_target_properties(TRDP::rapidjson PROPERTIES
                       INTERFACE_INCLUDE_DIRECTORIES "${RAPIDJSON_INCLUDE_DIR}")
+file(CREATE_LINK ${CMAKE_CURRENT_BINARY_DIR}/_deps ${CMAKE_SOURCE_DIR}/_deps SYMBOLIC)
