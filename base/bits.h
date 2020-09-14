@@ -64,22 +64,20 @@ class Bits {
   // Returns the last set (most significant) bit.
   // For n = 1, returns 0, for last MSB returns 63.
   // Undefined for 0 input.
-  static inline uint64_t Bsr64NonZero(uint64_t n) {
-    uint64_t result;
-    asm ("bsrq %1, %0"
-        : "=r" (result)
-        : "rm" (n));
-    return result;
+  static constexpr uint64_t Bsr64NonZero(uint64_t n) {
+    // We do not use ASM to allow multi-platform code
+    return  63 ^ __builtin_clzll(n);
+    /*uint64_t result;
+    asm ("bsrq %1, %0" : "=r" (result) : "rm" (n));*/
   }
 
   // Returns MSB index (0-31). For 1 returns 0.
-  static inline uint32_t BsrNonZero(uint32 v) {
+  static constexpr uint32_t BsrNonZero(uint32 v) {
+    return 31 ^ __builtin_clz(v);
+/*
    uint32_t result;
-   asm("bsrl %1,%0"
-            : "=r" (result)
-            : "rm" (v));
-
-    return result;
+   asm("bsrl %1,%0" : "=r" (result) : "rm" (v));
+   */
   }
 
   static constexpr unsigned CountLeadingZeros64(uint64_t val) {
@@ -115,6 +113,8 @@ class Bits {
 
 static_assert(Bits::CountLeadingZeros64(1ULL << 63) == 0, "");
 static_assert(Bits::CountLeadingZeros64(1ULL << 62) == 1, "");
+static_assert(Bits::Bsr64NonZero(1ULL << 63) == 63, "");
+static_assert(Bits::Bsr64NonZero(1ULL << 0) == 0, "");
 
 
 namespace base {
