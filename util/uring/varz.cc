@@ -74,5 +74,10 @@ VarzValue VarzMapAverage::GetData() const {
   return result;
 }
 
+VarzValue VarzFunction::GetData() const {
+  AnyValue::Map result = cb_();
+  return AnyValue(result);
+}
+
 }
 }  // namespace util

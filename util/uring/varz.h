@@ -71,5 +71,20 @@ class VarzMapAverage : public base::VarzListNode {
   std::unique_ptr<Map[]> avg_map_;
 };
 
+class VarzFunction : public base::VarzListNode {
+ public:
+  typedef AnyValue::Map KeyValMap;
+  typedef std::function<KeyValMap()> MapCb;
+
+  // cb - function that formats the output either as json or html according to the boolean is_json.
+  explicit VarzFunction(const char* varname, MapCb cb) : VarzListNode(varname), cb_(cb) {
+  }
+
+ private:
+  AnyValue GetData() const override;
+
+  MapCb cb_;
+};
+
 }  // namespace uring
 }  // namespace util
