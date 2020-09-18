@@ -216,8 +216,12 @@ add_definitions(-DBOOST_BEAST_SEPARATE_COMPILATION -DBOOST_ASIO_SEPARATE_COMPILA
 
 
 # TODO: On aarch64 heap profiler does not work, need to investigate it.
-set(PERF_TOOLS_OPTS --disable-heap-checker --disable-debugalloc --disable-heap-profiler)
-set(PERF_TOOLS_LIB "libprofiler.so")
+if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
+  set(PERF_TOOLS_LIB "libtcmalloc_and_profiler.so")
+else()
+  set(PERF_TOOLS_OPTS --disable-heap-checker --disable-debugalloc --disable-heap-profiler)
+  set(PERF_TOOLS_LIB "libprofiler.so")
+endif()
 
 add_third_party(
   gperf
@@ -238,7 +242,7 @@ add_third_party(pmr
 add_third_party(
   xxhash
   GIT_REPOSITORY https://github.com/Cyan4973/xxHash.git
-  GIT_TAG v0.7.4
+  GIT_TAG v0.8.0
   SOURCE_SUBDIR cmake_unofficial
   CMAKE_PASS_FLAGS "-DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF"
 )

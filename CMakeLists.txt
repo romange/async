@@ -31,5 +31,6 @@ endif()
 
 
 add_subdirectory(base)
+add_subdirectory(file)
 add_subdirectory(examples)
 add_subdirectory(util)

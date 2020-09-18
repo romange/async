@@ -123,7 +123,7 @@ constexpr uint32_t kSpinLimit = 200;
 
 thread_local Proactor::TLInfo Proactor::tl_info_;
 
-Proactor::Proactor() : task_queue_(128) {
+Proactor::Proactor() : task_queue_(256) {
   wake_fd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
   CHECK_GE(wake_fd_, 0);
   VLOG(1) << "Created wake_fd is " << wake_fd_;
@@ -208,6 +208,8 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
     }
 
     if (num_task_runs) {
+      DVLOG(2) << "Tasks runs " << num_task_runs << "/" << spin_loops;
+
       // Should we put 'notify' inside the loop? It might improve the latency.
       task_queue_avail_.notifyAll();
     }
@@ -235,19 +237,23 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
       sched->suspend();
 
       DVLOG(2) << "Resume ioloop";
+      spin_loops = 0;
       continue;
     }
 
-    if (cqe_count || io_uring_sq_ready(&ring_))
+    if (cqe_count || io_uring_sq_ready(&ring_) || num_task_runs > 0) {
+      spin_loops = 0;
       continue;
+    }
 
     // Lets spin a bit to make a system a bit more responsive.
     if (++spin_loops < kSpinLimit) {
-      // pthread_yield(); We should not spin using sched_yield it burns fuckload of cpu.
+      // We should not spin using sched_yield it burns fuckload of cpu.
       continue;
     }
 
     spin_loops = 0;  // Reset the spinning.
+    pthread_yield();
 
     /**
      * If tq_seq_ has changed since it was cached into tq_seq, then
@@ -259,9 +265,9 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
     if (tq_seq_.compare_exchange_weak(tq_seq, WAIT_SECTION_STATE, std::memory_order_acquire)) {
       if (is_stopped_)
         break;
-      DVLOG(1) << "wait_for_cqe";
+      DVLOG(2) << "wait_for_cqe";
       int res = wait_for_cqe(&ring_);
-      DVLOG(1) << "Woke up " << res << "/" << tq_seq_.load(std::memory_order_acquire);
+      DVLOG(2) << "Woke up " << res << "/" << tq_seq_.load(std::memory_order_acquire);
 
       tq_seq = 0;
       ++num_stalls;
@@ -359,7 +365,7 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
 }
 
 void Proactor::WakeRing() {
-  DVLOG(1) << "Wake ring " << tq_seq_.load(std::memory_order_relaxed);
+  DVLOG(2) << "Wake ring " << tq_seq_.load(std::memory_order_relaxed);
 
   tq_wakeups_.fetch_add(1, std::memory_order_relaxed);
 
@@ -560,7 +566,7 @@ void Proactor::CheckForTimeoutSupport() {
 
   // AL2 5.4 does not support timeout. Ubuntu 5.4 supports only relative option.
   // We can not use timeout API for 5.4.
-  if (cqe->res < 0) {
+  if (cqe->res < 0 && cqe->res != -ETIME) {
     support_timeout_ = 0;
     VLOG(1) << "Timeout op is not supported " << -cqe->res;
   } else {
