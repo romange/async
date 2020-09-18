@@ -215,6 +215,10 @@ Message(STATUS "Found Boost ${Boost_LIBRARY_DIRS} ${Boost_LIB_VERSION} ${Boost_V
 add_definitions(-DBOOST_BEAST_SEPARATE_COMPILATION -DBOOST_ASIO_SEPARATE_COMPILATION)
 
 
+# TODO: On aarch64 heap profiler does not work, need to investigate it.
+set(PERF_TOOLS_OPTS --disable-heap-checker --disable-debugalloc --disable-heap-profiler)
+set(PERF_TOOLS_LIB "libprofiler.so")
+
 add_third_party(
   gperf
   GIT_REPOSITORY https://github.com/gperftools/gperftools/
@@ -222,9 +226,9 @@ add_third_party(
   PATCH_COMMAND ./autogen.sh
   CONFIGURE_COMMAND <SOURCE_DIR>/configure --enable-frame-pointers --enable-static=no
                     --enable-libunwind "CXXFLAGS=${THIRD_PARTY_CXX_FLAGS}"
-                    --disable-deprecated-pprof --disable-heap-checker --enable-aggressive-decommit-by-default
-                    --disable-debugalloc --disable-heap-profiler --prefix=${THIRD_PARTY_LIB_DIR}/gperf
-  LIB libprofiler.so
+                    --disable-deprecated-pprof --enable-aggressive-decommit-by-default
+                    --prefix=${THIRD_PARTY_LIB_DIR}/gperf ${PERF_TOOLS_OPTS}
+  LIB ${PERF_TOOLS_LIB}
 )
 
 add_third_party(pmr
@@ -262,3 +266,4 @@ add_dependencies(TRDP::rapidjson rapidjson_project)
 set_target_properties(TRDP::rapidjson PROPERTIES
                       INTERFACE_INCLUDE_DIRECTORIES "${RAPIDJSON_INCLUDE_DIR}")
 file(CREATE_LINK ${CMAKE_CURRENT_BINARY_DIR}/_deps ${CMAKE_SOURCE_DIR}/_deps SYMBOLIC)
+file(CREATE_LINK ${CMAKE_CURRENT_BINARY_DIR}/third_party/libs/ ${CMAKE_SOURCE_DIR}/third_party SYMBOLIC)
