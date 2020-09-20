@@ -18,12 +18,20 @@ struct FiberReadOptions : public file::ReadonlyFile::Options {
     size_t preempt_cnt = 0;
   };
 
-  size_t prefetch_size = 1 << 16;   // 65K
+  size_t prefetch_size = 1 << 16;  // 65K
   Stats* stats = nullptr;
 };
 
-ABSL_MUST_USE_RESULT nonstd::expected<file::ReadonlyFile*, ::std::error_code> OpenFiberReadFile(
-    absl::string_view name, util::fibers_ext::FiberQueueThreadPool* tp,
+ABSL_MUST_USE_RESULT file::ReadonlyFileOrError OpenFiberReadFile(
+    absl::string_view name, fibers_ext::FiberQueueThreadPool* tp,
     const FiberReadOptions& opts = FiberReadOptions{});
+
+struct FiberWriteOptions : public file::WriteFile::Options {
+  bool consistent_thread = true;  // whether to send the write request to the thread in the pool.
+};
+
+ABSL_MUST_USE_RESULT file::WriteFileOrError OpenFiberWriteFile(
+    absl::string_view name, fibers_ext::FiberQueueThreadPool* tp,
+    const FiberWriteOptions& opts = FiberWriteOptions());
 
 }  // namespace util

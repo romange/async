@@ -42,8 +42,66 @@ static ssize_t read_all(int fd, uint8* buffer, size_t length, size_t offset) {
 inline bool IsUInt64ANegativeInt64(uint64 num) {
   return (static_cast<int64>(num) < 0);
 }
-}  // namespace
 
+class LocalWriteFile : public WriteFile {
+ public:
+  // flags defined at http://man7.org/linux/man-pages/man2/open.2.html
+  LocalWriteFile(absl::string_view file_name, int flags) : WriteFile(file_name), flags_(flags) {
+  }
+
+  virtual ~LocalWriteFile() override;
+
+  error_code Close() override;
+
+  error_code Write(const uint8* buffer, uint64 length) final;
+
+  error_code Open();
+
+ protected:
+  int fd_ = -1;
+  int flags_;
+};
+
+LocalWriteFile::~LocalWriteFile() {
+}
+
+error_code LocalWriteFile::Open() {
+  CHECK_EQ(fd_, -1);
+
+  fd_ = open(create_file_name_.c_str(), flags_, 0644);
+  if (fd_ < 0) {
+    return StatusFileError();
+  }
+  return error_code{};
+}
+
+error_code LocalWriteFile::Close() {
+  int res = 0;
+  if (fd_ > 0) {
+    res = close(fd_);
+    fd_ = -1;
+  }
+  return res < 0 ? StatusFileError() : error_code{};
+}
+
+error_code LocalWriteFile::Write(const uint8* buffer, uint64 length) {
+  DCHECK(buffer);
+  DCHECK(!IsUInt64ANegativeInt64(length));
+
+  uint64 left_to_write = length;
+  while (left_to_write > 0) {
+    ssize_t written = write(fd_, buffer, left_to_write);
+    if (written < 0) {
+      return StatusFileError();
+    }
+    buffer += written;
+    left_to_write -= written;
+  }
+
+  return error_code{};
+}
+
+}  // namespace
 
 bool Exists(absl::string_view fname) {
   return access(fname.data(), F_OK) == 0;
@@ -88,7 +146,7 @@ class PosixReadFile final : public ReadonlyFile {
     return error_code{};
   }
 
-  ExpectedSize Read(size_t offset, const Bytes& range) override {
+  SizeOrError Read(size_t offset, const MutableBytes& range) override {
     if (range.empty())
       return 0;
 
@@ -112,8 +170,8 @@ class PosixReadFile final : public ReadonlyFile {
   };
 };
 
-expected<ReadonlyFile*, ::std::error_code> OpenLocal(absl::string_view name,
-                                                     const ReadonlyFile::Options& opts) {
+expected<ReadonlyFile*, ::error_code> OpenRead(absl::string_view name,
+                                               const ReadonlyFile::Options& opts) {
   int fd = open(name.data(), O_RDONLY);
   if (fd < 0) {
     return make_unexpected(StatusFileError());
@@ -126,6 +184,28 @@ expected<ReadonlyFile*, ::std::error_code> OpenLocal(absl::string_view name,
 
   int advice = opts.sequential ? POSIX_FADV_SEQUENTIAL : POSIX_FADV_NORMAL;
   return new PosixReadFile(fd, sb.st_size, advice, opts.drop_cache_on_close);
+}
+
+expected<WriteFile*, error_code> OpenWrite(absl::string_view file_name,
+                                                   WriteFile::Options opts) {
+  int flags = O_CREAT | O_WRONLY | O_CLOEXEC;
+  if (opts.append)
+    flags |= O_APPEND;
+  else
+    flags |= O_TRUNC;
+  LocalWriteFile* ptr = new LocalWriteFile(file_name, flags);
+  error_code ec = ptr->Open();
+  if (ec) {
+    delete ptr;
+    return make_unexpected(ec);
+  }
+  return ptr;
+}
+
+WriteFile::WriteFile(absl::string_view name) : create_file_name_(name) {
+}
+
+WriteFile::~WriteFile() {
 }
 
 }  // namespace file

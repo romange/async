@@ -59,7 +59,7 @@ class FiberReadFile : public ReadonlyFile {
   // Reads upto length bytes and updates the result to point to the data.
   // May use buffer for storing data. In case, EOF reached sets result.size() < length but still
   // returns Status::OK.
-  ExpectedSize Read(size_t offset, const Bytes& range) final;
+  SizeOrError Read(size_t offset, const MutableBytes& range) final;
 
   // releases the system handle for this file.
   ::std::error_code Close() final;
@@ -73,14 +73,14 @@ class FiberReadFile : public ReadonlyFile {
   }
 
  private:
-  ExpectedSize ReadAndPrefetch(size_t offset, const Bytes& range);
+  SizeOrError ReadAndPrefetch(size_t offset, const MutableBytes& range);
 
   // Returns true if requires further prefetching.
-  std::pair<size_t, bool> ReadFromCache(size_t offset, const Bytes& range);
+  std::pair<size_t, bool> ReadFromCache(size_t offset, const MutableBytes& range);
 
   void HandleActivePrefetch();
 
-  Bytes prefetch_;
+  MutableBytes prefetch_;
   size_t file_prefetch_offset_ = -1;
   std::unique_ptr<uint8_t[]> buf_;
   size_t buf_size_ = 0;
@@ -96,13 +96,34 @@ class FiberReadFile : public ReadonlyFile {
   absl::Time prefetch_start_ts_;
 };
 
+class WriteFileImpl : public WriteFile {
+ public:
+  WriteFileImpl(WriteFile* real, ssize_t hash, fibers_ext::FiberQueueThreadPool* tp)
+      : WriteFile(real->create_file_name()), upstream_(real), tp_(tp), hash_(hash) {
+  }
+
+  error_code Close() final;
+
+  error_code Write(const uint8* buffer, uint64 length) final;
+
+  virtual ~WriteFileImpl() {
+  }
+
+ private:
+  WriteFile* upstream_;
+
+  fibers_ext::FiberQueueThreadPool* tp_;
+  ssize_t hash_;
+};
+
+/**** Implementation *********************/
 FiberReadFile::FiberReadFile(const FiberReadOptions& opts, ReadonlyFile* next,
                              util::fibers_ext::FiberQueueThreadPool* tp)
     : next_(next), tp_(tp) {
   buf_size_ = opts.prefetch_size;
   if (buf_size_) {
     buf_.reset(new uint8_t[buf_size_]);
-    prefetch_ = Bytes(buf_.get(), 0);
+    prefetch_ = MutableBytes(buf_.get(), 0);
   }
   stats_ = opts.stats;
 }
@@ -117,7 +138,7 @@ error_code FiberReadFile::Close() {
   return next_->Close();
 }
 
-auto FiberReadFile::ReadAndPrefetch(size_t offset, const Bytes& range) -> ExpectedSize {
+auto FiberReadFile::ReadAndPrefetch(size_t offset, const MutableBytes& range) -> SizeOrError {
   size_t copied = 0;
   if (stats_)
     ++stats_->read_prefetch_cnt;
@@ -133,7 +154,7 @@ auto FiberReadFile::ReadAndPrefetch(size_t offset, const Bytes& range) -> Expect
   DCHECK(!prefetch_ptr_);  // no active pending requests at this point.
 
   // At this point prefetch_ must point at buf_ and might still contained prefetched slice.
-  prefetch_ = Bytes(buf_.get(), prefetch_.size());
+  prefetch_ = MutableBytes(buf_.get(), prefetch_.size());
 
   iovec io[2] = {{range.data() + copied, range.size() - copied},
                  {buf_.get() + prefetch_.size(), buf_size_ - prefetch_.size()}};
@@ -168,7 +189,7 @@ auto FiberReadFile::ReadAndPrefetch(size_t offset, const Bytes& range) -> Expect
     file_prefetch_offset_ = offset + io[0].iov_len;
     total_read -= io[0].iov_len;  // reduce range part.
 
-    prefetch_ = Bytes(buf_.get(), total_read);
+    prefetch_ = MutableBytes(buf_.get(), total_read);
     if (stats_) {
       stats_->cache_bytes += total_read;
     }
@@ -197,7 +218,7 @@ auto FiberReadFile::ReadAndPrefetch(size_t offset, const Bytes& range) -> Expect
 
 // Returns how much was read from cache and whether we should issue prefetch request following
 // this read.
-std::pair<size_t, bool> FiberReadFile::ReadFromCache(size_t offset, const Bytes& range) {
+std::pair<size_t, bool> FiberReadFile::ReadFromCache(size_t offset, const MutableBytes& range) {
   bool should_prefetch =
       (range.size() > prefetch_.size() && prefetch_ptr_) || (offset != file_prefetch_offset_);
   if (should_prefetch) {
@@ -206,7 +227,7 @@ std::pair<size_t, bool> FiberReadFile::ReadFromCache(size_t offset, const Bytes&
 
   std::pair<size_t, bool> res(0, true);
   if (offset != file_prefetch_offset_) {
-    prefetch_ = Bytes{};
+    prefetch_ = MutableBytes{};
     return res;
   }
 
@@ -236,10 +257,10 @@ void FiberReadFile::HandleActivePrefetch() {
 
   if (prefetch_res > 0) {
     if (prefetch_.empty()) {
-      prefetch_ = Bytes(prefetch_ptr_, prefetch_res);
+      prefetch_ = MutableBytes(prefetch_ptr_, prefetch_res);
     } else {
       CHECK(prefetch_.end() == prefetch_ptr_);
-      prefetch_ = Bytes(prefetch_.data(), prefetch_res + prefetch_.size());
+      prefetch_ = MutableBytes(prefetch_.data(), prefetch_res + prefetch_.size());
     }
     DCHECK_LE(prefetch_.end() - buf_.get(), ptrdiff_t(buf_size_));
     if (stats_) {
@@ -261,8 +282,8 @@ void FiberReadFile::HandleActivePrefetch() {
   prefetch_ptr_ = nullptr;
 }
 
-auto FiberReadFile::Read(size_t offset, const Bytes& range) -> ExpectedSize {
-  ExpectedSize res;
+auto FiberReadFile::Read(size_t offset, const MutableBytes& range) -> SizeOrError {
+  SizeOrError res;
 
   if (buf_) {  // prefetch enabled.
     res = ReadAndPrefetch(offset, range);
@@ -279,15 +300,41 @@ auto FiberReadFile::Read(size_t offset, const Bytes& range) -> ExpectedSize {
   return res;
 }
 
+error_code WriteFileImpl::Close() {
+  if (!upstream_)
+    return error_code{};
+
+  return tp_->Await([this] { return upstream_->Close(); });
+}
+
+error_code WriteFileImpl::Write(const uint8* buffer, uint64 length) {
+  auto cb = [&] { return upstream_->Write(buffer, length); };
+  if (hash_ < 0)
+    return tp_->Await(std::move(cb));
+  else
+    return tp_->Await(hash_, std::move(cb));
+}
+
 }  // namespace
 
-nonstd::expected<ReadonlyFile*, ::std::error_code> OpenFiberReadFile(
-    absl::string_view name, util::fibers_ext::FiberQueueThreadPool* tp,
-    const FiberReadOptions& opts) {
-  nonstd::expected<ReadonlyFile*, ::std::error_code> res = file::OpenLocal(name, opts);
+ReadonlyFileOrError OpenFiberReadFile(absl::string_view name, fibers_ext::FiberQueueThreadPool* tp,
+                                      const FiberReadOptions& opts) {
+  ReadonlyFileOrError res = OpenRead(name, opts);
   if (!res)
     return res;
   return new FiberReadFile(opts, res.value(), tp);
+}
+
+WriteFileOrError OpenFiberWriteFile(absl::string_view name, fibers_ext::FiberQueueThreadPool* tp,
+                                    const FiberWriteOptions& opts) {
+  WriteFileOrError res = OpenWrite(name, opts);
+  if (!res)
+    return res;
+
+  ssize_t hash = -1;
+  if (opts.consistent_thread)
+    hash = base::XXHash32(name);
+  return new WriteFileImpl(res.value(), hash, tp);
 }
 
 }  // namespace util

@@ -12,8 +12,9 @@
             "includePath": [
                 "${workspaceFolder}",
                 "${workspaceFolder}/genfiles",
-                "${workspaceFolder}/build-opt/third_party/libs/uring/include",
-                "${workspaceFolder}/build-opt/third_party/libs/gperf/include",
+                "${workspaceFolder}/third_party/uring/include",
+                "${workspaceFolder}/third_party/gperf/include",
+                "${workspaceFolder}/third_party/xxhash/include",
                 "${workspaceFolder}/build-opt/_deps/abseil_cpp-src",
                 "${workspaceFolder}/build-opt/_deps/gflags-build/include",
                 "${workspaceFolder}/build-opt/_deps/gtest-src/googletest/include",

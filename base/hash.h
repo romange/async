@@ -8,6 +8,7 @@
 #include <string>
 
 #include "absl/types/optional.h"
+#include "absl/strings/string_view.h"
 
 #define XXH_STATIC_LINKING_ONLY
 #include <xxhash.h>
@@ -54,6 +55,10 @@ void HashAppend(Hasher& h, const absl::optional<T>& x) noexcept {
 }
 
 template<typename Hasher> void HashAppend(Hasher& h, const std::string& t) noexcept {
+  h.update(t.data(), t.size());
+}
+
+template<typename Hasher> void HashAppend(Hasher& h, const absl::string_view& t) noexcept {
   h.update(t.data(), t.size());
 }
 
