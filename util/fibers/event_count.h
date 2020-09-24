@@ -44,10 +44,7 @@ class EventCount {
     Key(Key&&) noexcept = default;
 
     ~Key() {
-      // memory_order_relaxed would suffice for correctness, but the faster
-      // #waiters gets to 0, the less likely it is that we'll do spurious wakeups
-      // (and thus system calls).
-      me_->val_.fetch_sub(kAddWaiter, std::memory_order_seq_cst);
+      me_->val_.fetch_sub(kAddWaiter, std::memory_order_relaxed);
     }
 
     uint32_t epoch() const { return epoch_; }
@@ -157,13 +154,10 @@ inline bool EventCount::notifyAll() noexcept {
 
 // Atomically checks for epoch and waits on cond_var.
 inline void EventCount::wait(uint32_t epoch) noexcept {
-  if ((val_.load(std::memory_order_acquire) >> kEpochShift) != epoch)
-    return;
-
   auto* active_ctx = ::boost::fibers::context::active();
 
   spinlock_lock_t lk{wait_queue_splk_};
-  if ((val_.load(std::memory_order_acquire) >> kEpochShift) == epoch) {
+  if ((val_.load(std::memory_order_relaxed) >> kEpochShift) == epoch) {
     // atomically call lt.unlock() and block on *this
     // store this fiber in waiting-queue
     active_ctx->wait_link(wait_queue_);
@@ -183,7 +177,7 @@ template <typename Condition> bool EventCount::await(Condition condition) {
   // noexcept, Key destructor makes sure to cancelWait state when exiting the function.
   bool preempt = false;
   while (true) {
-    Key key = prepareWait();
+    Key key = prepareWait(); // Key destructor restores back the sequence counter.
     if (condition()) {
       break;
     }

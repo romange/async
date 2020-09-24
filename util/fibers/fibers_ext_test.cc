@@ -1,49 +1,31 @@
 // Copyright 2019, Beeri 15.  All rights reserved.
 // Author: Roman Gershman (romange@gmail.com)
 //
+#include <absl/time/clock.h>
 #include "base/gtest.h"
-#include "base/walltime.h"
-
-#include "util/asio/io_context_pool.h"
 #include "util/fibers/fiberqueue_threadpool.h"
 #include "util/fibers/simple_channel.h"
+#include "util/uring/proactor_pool.h"
+#include "util/uring/uring_fiber_algo.h"
 
 using namespace boost;
 
 namespace util {
+using namespace uring;
+
 namespace fibers_ext {
 
 class FibersTest : public testing::Test {
  protected:
-  void SetUp() final {}
+  void SetUp() final {
+  }
 
-  void TearDown() final {}
+  void TearDown() final {
+  }
 
   static void SetUpTestCase() {
-    base::SetupJiffiesTimer();
   }
 };
-
-TEST_F(FibersTest, SimpleChannel) {
-  SimpleChannel<int> channel(10);
-  ASSERT_TRUE(channel.TryPush(2));
-  channel.Push(4);
-
-  int val = 0;
-  ASSERT_TRUE(channel.Pop(val));
-  EXPECT_EQ(2, val);
-  ASSERT_TRUE(channel.Pop(val));
-  EXPECT_EQ(4, val);
-
-  fibers::fiber fb(fibers::launch::post, [&] { EXPECT_TRUE(channel.Pop(val)); });
-  channel.Push(7);
-  fb.join();
-  EXPECT_EQ(7, val);
-
-  fb = fibers::fiber(fibers::launch::post, [&] { EXPECT_FALSE(channel.Pop(val)); });
-  channel.StartClosing();
-  fb.join();
-}
 
 TEST_F(FibersTest, EventCount) {
   EventCount ec;
@@ -75,7 +57,7 @@ TEST_F(FibersTest, SpuriousNotify) {
   std::thread t1([check_positive, &ec]() { ec.await(check_positive); });
 
   while (!ec.notify())
-    SleepForMilliseconds(1);
+    usleep(1000);
   val = 1;
   ASSERT_TRUE(ec.notify());
   t1.join();
@@ -94,6 +76,39 @@ TEST_F(FibersTest, FQTP) {
   }
 }
 
+TEST_F(FibersTest, FiberQueue) {
+  uring::ProactorPool pool{1};
+  pool.Run();
+
+  uring::Proactor* proactor = pool.GetNextProactor();
+  FiberQueue fq{32};
+
+  auto fiber = proactor->LaunchFiber([&] {
+    // this_fiber::properties<UringFiberAlgo>().SetNiceLevel(1);
+    fq.Run();
+  });
+
+  constexpr unsigned kIters = 10000;
+  size_t delay = 0;
+  size_t invocations = 0;
+  for (unsigned i = 0; i < kIters; ++i) {
+    auto start = absl::Now();
+
+    fq.Add([&, start] {
+      ASSERT_TRUE(proactor->IsProactorThread());
+      auto dur = absl::Now() - start;
+      delay += absl::ToInt64Microseconds(dur);
+      ++invocations;
+    });
+  }
+  fq.Shutdown();
+  fiber.join();
+
+  EXPECT_EQ(kIters, invocations);
+  EXPECT_LT(delay / kIters, 2000);  //
+  EXPECT_GT(delay, 0);              //
+}
+
 TEST_F(FibersTest, SimpleChannelDone) {
   SimpleChannel<std::function<void()>> s(2);
   std::thread t([&] {
@@ -107,44 +122,42 @@ TEST_F(FibersTest, SimpleChannelDone) {
 
   for (unsigned i = 0; i < 100; ++i) {
     Done done;
-    s.Push([done] () mutable { done.Notify();});
+    s.Push([done]() mutable { done.Notify(); });
     done.Wait();
   }
   s.StartClosing();
   t.join();
 }
 
-TEST_F(FibersTest, FiberQueue) {
-  IoContextPool pool{1};
-  pool.Run();
+typedef testing::Types<base::mpmc_bounded_queue<int>, folly::ProducerConsumerQueue<int>>
+    QueueImplementations;
 
-  IoContext& cntx = pool.GetNextContext();
-  FiberQueue fq{32};
+template <typename Q>
+class ChannelTest : public ::testing::Test {
+ public:
+};
+TYPED_TEST_SUITE(ChannelTest, QueueImplementations);
 
-  auto fiber = cntx.LaunchFiber([&] {
-    this_fiber::properties<IoFiberProperties>().SetNiceLevel(1);
-    fq.Run();
-  });
+TYPED_TEST(ChannelTest, SimpleChannel) {
+  using Channel = SimpleChannel<int, TypeParam>;
+  Channel channel(16);
+  ASSERT_TRUE(channel.TryPush(2));
+  channel.Push(4);
 
-  constexpr unsigned kIters = 10000;
-  size_t delay = 0;
-  size_t invocations = 0;
-  for (unsigned i = 0; i < kIters; ++i) {
-    auto start = base::GetMonotonicMicrosFast();
-    ASSERT_GT(start, 0);
+  int val = 0;
+  ASSERT_TRUE(channel.Pop(val));
+  EXPECT_EQ(2, val);
+  ASSERT_TRUE(channel.Pop(val));
+  EXPECT_EQ(4, val);
 
-    fq.Add([&, start] {
-      ASSERT_TRUE(cntx.InContextThread());
-      delay += base::GetMonotonicMicrosFast() - start;
-      ++invocations;
-    });
-  }
-  fq.Shutdown();
-  fiber.join();
+  fibers::fiber fb(fibers::launch::post, [&] { EXPECT_TRUE(channel.Pop(val)); });
+  channel.Push(7);
+  fb.join();
+  EXPECT_EQ(7, val);
 
-  EXPECT_EQ(kIters, invocations);
-  EXPECT_LT(delay / kIters, 2000);  //
-  EXPECT_GT(delay, 0);  //
+  fb = fibers::fiber(fibers::launch::post, [&] { EXPECT_FALSE(channel.Pop(val)); });
+  channel.StartClosing();
+  fb.join();
 }
 
 }  // namespace fibers_ext

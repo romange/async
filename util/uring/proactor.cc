@@ -297,10 +297,9 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   io_uring_params params;
   memset(&params, 0, sizeof(params));
 
-  if (geteuid() == 0) {
+  if (FLAGS_proactor_register_fd && geteuid() == 0) {
     params.flags |= IORING_SETUP_SQPOLL;
     LOG_FIRST_N(INFO, 1) << "Root permissions - setting SQPOLL flag";
-    CHECK(FLAGS_proactor_register_fd);
   }
 
   // Optionally reuse the already created work-queue from another uring.

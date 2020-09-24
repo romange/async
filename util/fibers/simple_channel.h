@@ -3,31 +3,41 @@
 //
 #pragma once
 
-#include "base/ProducerConsumerQueue.h"
-
 #include <boost/fiber/context.hpp>
 
+#include "base/ProducerConsumerQueue.h"
+#include "base/mpmc_bounded_queue.h"
 #include "util/fibers/event_count.h"
 #include "util/fibers/fibers_ext.h"
 
 namespace util {
 namespace fibers_ext {
 
+namespace detail {
+template <typename Q> class QueueTraits;
+}  // namespace detail
+
 /*!
-  \brief Single producer - single consumer thread-safe, fiber-friendly channel.
+  \brief Thread-safe, fiber-friendly channel. Can be SPSC or MPMC depending on the underlying
+         queue implementation.
 
   Fiber friendly - means that multiple fibers within a single thread at each end-point
   can use the channel: K fibers from producer thread can push and N fibers from consumer thread
   can pull the records. It has optional blocking interface that suspends blocked fibers upon
   empty/full conditions. This class designed to be pretty efficient by reducing the contention
-  on its synchronization primitives to minimum.
+  on its synchronization primitives to minimum. It assumes that number of producer
+  threads is known in advance. The queue is in Closing state when all the producers called
+  StartClosing();
 */
-template <typename T> class SimpleChannel {
+template <typename T, typename Queue = folly::ProducerConsumerQueue<T>> class SimpleChannel {
   typedef ::boost::fibers::context::wait_queue_t wait_queue_t;
   using spinlock_lock_t = ::boost::fibers::detail::spinlock_lock;
 
+  using QTraits = detail::QueueTraits<Queue>;
+
  public:
-  SimpleChannel(size_t n) : q_(n) {}
+  SimpleChannel(size_t n, unsigned num_producers = 1) : q_(n), num_producers_(num_producers) {
+  }
 
   template <typename... Args> void Push(Args&&... recordArgs) noexcept;
 
@@ -46,7 +56,7 @@ template <typename T> class SimpleChannel {
 
   //! Non blocking push.
   template <typename... Args> bool TryPush(Args&&... args) noexcept {
-    if (q_.write(std::forward<Args>(args)...)) {
+    if (QTraits::TryEnqueue(q_, std::forward<Args>(args)...)) {
       if (++throttled_pushes_ > q_.capacity() / 3) {
         pop_ec_.notify();
         throttled_pushes_ = 0;
@@ -58,28 +68,32 @@ template <typename T> class SimpleChannel {
 
   //! Non blocking pop.
   bool TryPop(T& val) {
-    if (q_.read(val)) {
+    if (QTraits::TryDequeue(q_, val)) {
       return true;
     }
     push_ec_.notify();
     return false;
   }
 
-  bool IsClosing() const { return is_closing_.load(std::memory_order_relaxed); }
+  bool IsClosing() const {
+    // It's safe to use relaxed due to monotonicity of is_closing_.
+    return is_closing_.load(std::memory_order_relaxed) >= num_producers_;
+  }
 
  private:
+  Queue q_;
   unsigned throttled_pushes_ = 0;
+  unsigned num_producers_;
 
-  folly::ProducerConsumerQueue<T> q_;
-  std::atomic_bool is_closing_{false};
+  std::atomic_uint32_t is_closing_{0};
 
   // Event counts provide almost negligible contention during fast-path (a single atomic add).
   EventCount push_ec_, pop_ec_;
 };
 
-template <typename T>
+template <typename T, typename Q>
 template <typename... Args>
-void SimpleChannel<T>::Push(Args&&... args) noexcept {
+void SimpleChannel<T, Q>::Push(Args&&... args) noexcept {
   if (TryPush(std::forward<Args>(args)...))  // fast path.
     return;
 
@@ -92,7 +106,7 @@ void SimpleChannel<T>::Push(Args&&... args) noexcept {
   }
 }
 
-template <typename T> bool SimpleChannel<T>::Pop(T& dest) {
+template <typename T, typename Q> bool SimpleChannel<T, Q>::Pop(T& dest) {
   if (TryPop(dest))  // fast path
     return true;
 
@@ -102,7 +116,7 @@ template <typename T> bool SimpleChannel<T>::Pop(T& dest) {
       return true;
     }
 
-    if (is_closing_.load(std::memory_order_acquire)) {
+    if (IsClosing()) {
       return false;
     }
 
@@ -110,11 +124,40 @@ template <typename T> bool SimpleChannel<T>::Pop(T& dest) {
   }
 }
 
-template <typename T> void SimpleChannel<T>::StartClosing() {
-  // Full barrier, StartClosing performance does not matter.
-  is_closing_.store(true, std::memory_order_seq_cst);
+template <typename T, typename Q> void SimpleChannel<T, Q>::StartClosing() {
+  is_closing_.fetch_add(1, std::memory_order_acq_rel);
   pop_ec_.notifyAll();
 }
+
+namespace detail {
+
+template <typename T> struct QueueTraits<folly::ProducerConsumerQueue<T>> {
+  using Queue = folly::ProducerConsumerQueue<T>;
+
+ public:
+  template <typename... Args> static bool TryEnqueue(Queue& q, Args&&... args) noexcept {
+    return q.write(std::forward<Args>(args)...);
+  }
+
+  static bool TryDequeue(Queue& q, T& val) noexcept {
+    return q.read(val);
+  }
+};
+
+template <typename T> struct QueueTraits<base::mpmc_bounded_queue<T>> {
+  using Queue = base::mpmc_bounded_queue<T>;
+
+ public:
+  template <typename... Args> static bool TryEnqueue(Queue& q, Args&&... args) noexcept {
+    return q.try_enqueue(std::forward<Args>(args)...);
+  }
+
+  static bool TryDequeue(Queue& q, T& val) noexcept {
+    return q.try_dequeue(val);
+  }
+};
+
+}  // namespace detail
 
 }  // namespace fibers_ext
 }  // namespace util

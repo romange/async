@@ -120,8 +120,9 @@ void GetKernelVersion(KernelVersion* version) {
 
   CHECK_EQ(0, uname(&buffer));
 
-  CHECK_EQ(4, sscanf(buffer.release, "%u.%u.%u-%u", &version->kernel, &version->major,
-                     &version->minor, &version->patch));
+  int res = sscanf(buffer.release, "%u.%u.%u-%u", &version->kernel, &version->major,
+                   &version->minor, &version->patch);
+  CHECK(res == 3 || res == 4) << res;
 }
 
 }  // namespace sys
