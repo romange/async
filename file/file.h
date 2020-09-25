@@ -65,7 +65,8 @@ class WriteFile {
 
   virtual ~WriteFile();
 
-  /*! @brief Flushes remaining data, closes access to a file handle .
+  /*! @brief Flushes remaining data, closes access to a file handle. For asynchronous interfaces
+      serves as a barrier and makes sure previous writes are flushed.
    *
    */
   virtual std::error_code Close() = 0;
@@ -80,6 +81,14 @@ class WriteFile {
   const std::string& create_file_name() const {
     return create_file_name_;
   }
+
+  // May be used for asynchronous implementations in order to communicate the intermediate status
+  // so far.
+  virtual std::error_code Status() { return std::error_code{};}
+
+  // By default not implemented but can be for asynchronous implementations. Does not return
+  // status. Refer to Status() and Close() for querying the intermediate status.
+  virtual void AsyncWrite(std::string blob) {}
 
  protected:
   explicit WriteFile(const absl::string_view create_file_name);

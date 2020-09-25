@@ -8,6 +8,7 @@
 #include <sys/uio.h>
 
 #include <atomic>
+#include <boost/fiber/mutex.hpp>
 
 #include "base/hash.h"
 #include "base/histogram.h"
@@ -17,6 +18,7 @@ namespace util {
 using namespace file;
 using namespace std;
 using nonstd::make_unexpected;
+using namespace boost;
 
 namespace {
 
@@ -109,11 +111,24 @@ class WriteFileImpl : public WriteFile {
   virtual ~WriteFileImpl() {
   }
 
+  std::error_code Status() final {
+    unique_lock<fibers::mutex> lk(mu_);
+    return ec_;
+  }
+
+  // By default not implemented but can be for asynchronous implementations. Does not return
+  // status. Refer to Status() and Close() for querying the intermediate status.
+  void AsyncWrite(std::string blob) final;
+
  private:
   WriteFile* upstream_;
 
   fibers_ext::FiberQueueThreadPool* tp_;
   ssize_t hash_;
+
+  fibers::mutex mu_;
+  error_code ec_;
+  atomic_bool has_error_{false};
 };
 
 /**** Implementation *********************/
@@ -301,10 +316,19 @@ auto FiberReadFile::Read(size_t offset, const MutableBytes& range) -> SizeOrErro
 }
 
 error_code WriteFileImpl::Close() {
-  if (!upstream_)
-    return error_code{};
-
-  return tp_->Await([this] { return upstream_->Close(); });
+  error_code res;
+  if (!has_error_.load(std::memory_order_relaxed)) {
+    if (upstream_) {
+      // must be first to ensure all write operations finish.
+      res = tp_->Await([this] { return upstream_->Close(); });
+    }
+  }
+  // After the barrier passed we know all writes completed.
+  if (!res) {
+    unique_lock<fibers::mutex> lk(mu_);
+    res = ec_;
+  }
+  return res;
 }
 
 error_code WriteFileImpl::Write(const uint8* buffer, uint64 length) {
@@ -313,6 +337,25 @@ error_code WriteFileImpl::Write(const uint8* buffer, uint64 length) {
     return tp_->Await(std::move(cb));
   else
     return tp_->Await(hash_, std::move(cb));
+}
+
+void WriteFileImpl::AsyncWrite(std::string blob) {
+  if (has_error_.load(std::memory_order_relaxed))
+    return;  // Do not bother
+
+  auto cb = [this, blob = std::move(blob)] {
+    auto ec = upstream_->Write(blob);
+    if (ec) {
+      unique_lock<fibers::mutex> lk(mu_);
+      ec_ = ec;
+      has_error_.store(true, std::memory_order_relaxed);  // under mutex.
+    }
+  };
+
+  if (hash_ < 0)
+    tp_->Add(std::move(cb));
+  else
+    tp_->Add(hash_, std::move(cb));
 }
 
 }  // namespace
