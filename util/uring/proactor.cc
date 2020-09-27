@@ -89,9 +89,7 @@ void SigAction(int signal, siginfo_t*, void*) {
 }
 
 inline uint64_t GetClockNanos() {
-  timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return ts.tv_sec * std::nano::den + ts.tv_nsec;
+  return absl::GetCurrentTimeNanos();
 }
 
 inline unsigned CQReadyCount(const io_uring& ring) {
@@ -133,6 +131,8 @@ Proactor::Proactor() : task_queue_(256) {
 }
 
 Proactor::~Proactor() {
+  idle_map_.clear();
+
   CHECK(is_stopped_);
   if (thread_id_ != -1U) {
     io_uring_queue_exit(&ring_);
@@ -148,6 +148,7 @@ Proactor::~Proactor() {
       ss->signal_map[i].cb = nullptr;
     }
   }
+
 }
 
 void Proactor::Stop() {
@@ -190,28 +191,24 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
 
     num_task_runs = 0;
 
-    uint64_t task_start = 0;
-
     tq_seq = tq_seq_.load(std::memory_order_acquire);
 
-    // This should handle wait-free and "submit-free" short CPU tasks enqued using Async/Await
-    // calls. We allocate the quota of 500K nsec (500usec) of CPU time per iteration.
-    while (task_queue_.try_dequeue(task)) {
-      ++num_task_runs;
-      tl_info_.monotonic_time = GetClockNanos();
-      task();
-      if (task_start == 0) {
-        task_start = tl_info_.monotonic_time;
-      } else if (task_start + 500000 < tl_info_.monotonic_time) {
-        break;
-      }
-    }
+    // This should handle wait-free and "brief" CPU-only tasks enqued using Async/Await
+    // calls. We allocate the quota of 500K nsec (500usec) of CPU time per iteration
+    // To save redundant timer-calls we start measuring time only when if the queue is not empty.
+    if (task_queue_.try_dequeue(task)) {
+      uint64_t task_start = GetClockNanos();
+      // update thread-local clock service via GetMonotonicTimeNs().
+      tl_info_.monotonic_time = task_start;
+      do {
+        task();
+        ++num_task_runs;
+        tl_info_.monotonic_time = GetClockNanos();
+      } while (task_start + 500000 < tl_info_.monotonic_time && task_queue_.try_dequeue(task));
 
-    if (num_task_runs) {
-      DVLOG(2) << "Tasks runs " << num_task_runs << "/" << spin_loops;
-
-      // Should we put 'notify' inside the loop? It might improve the latency.
       task_queue_avail_.notifyAll();
+
+      DVLOG(2) << "Tasks runs " << num_task_runs << "/" << spin_loops;
     }
 
     uint32_t cqe_count = IoRingPeek(ring_, cqes, kBatchSize);
@@ -243,6 +240,16 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
 
     if (cqe_count || io_uring_sq_ready(&ring_) || num_task_runs > 0) {
       spin_loops = 0;
+      continue;
+    }
+
+    if (!idle_map_.empty()) {  // TODO: to break upon timer constraints (~20usec).
+      for (auto it = idle_map_.begin(); it != idle_map_.end(); ++it) {
+        if (!it->second()) {
+          idle_map_.erase(it);
+          break;
+        }
+      }
       continue;
     }
 
@@ -360,7 +367,7 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   }
 
   thread_id_ = pthread_self();
-  tl_info_.is_proactor_thread = true;
+  tl_info_.owner = this;
 }
 
 void Proactor::WakeRing() {
@@ -547,6 +554,13 @@ void Proactor::UnregisterFd(unsigned fixed_fd) {
   if (fixed_fd < next_free_fd_) {
     next_free_fd_ = fixed_fd;
   }
+}
+
+uint64_t Proactor::AddIdleTask(IdleTask f) {
+  uint64_t id = next_idle_task_++;
+  auto res = idle_map_.emplace(id, std::move(f));
+  CHECK(res.second);
+  return id;
 }
 
 void Proactor::CheckForTimeoutSupport() {

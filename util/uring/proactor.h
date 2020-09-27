@@ -10,6 +10,8 @@
 #include <boost/fiber/fiber.hpp>
 #include <functional>
 
+#include "absl/container/flat_hash_map.h"
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Waddress"
 #include "base/function2.hpp"
@@ -41,6 +43,7 @@ class Proactor {
   void Stop();
 
   using IoResult = int;
+  using IdleTask = std::function<bool()>;
 
   // IoResult is the I/O result of the completion event.
   // int64_t is the payload supplied during event submission. See GetSubmitEntry below.
@@ -79,7 +82,11 @@ class Proactor {
   }
 
   static bool IsProactorThread() {
-    return tl_info_.is_proactor_thread;
+    return tl_info_.owner != nullptr;
+  }
+
+  static Proactor* me() {
+    return tl_info_.owner;
   }
 
   // Returns an approximate (cached) time with nano-sec granularity.
@@ -170,6 +177,16 @@ class Proactor {
 
   void UnregisterFd(unsigned fixed_fd);
 
+  /**
+   * @brief Adds a task that should run when Proactor loop is idle. The task should return
+   *        true if keep it running or false if it finished its job.
+   *
+   * @tparam Func
+   * @param f
+   * @return uint64_t an unique ids denoting this task. Can be used for cancellation.
+   */
+  uint64_t AddIdleTask(IdleTask f);
+
  private:
   enum { WAIT_SECTION_STATE = 1UL << 31 };
 
@@ -247,10 +264,14 @@ class Proactor {
   int32_t next_free_ce_ = -1;
   uint32_t next_free_fd_ = 0;
 
+  uint64_t next_idle_task_{1};
+  absl::flat_hash_map<uint64_t, IdleTask> idle_map_;
+  absl::flat_hash_map<uint64_t, IdleTask>::const_iterator idle_it_;
+
   struct TLInfo {
-    bool is_proactor_thread = false;
     uint32_t proactor_index = 0;
-    uint64_t monotonic_time = 0;
+    uint64_t monotonic_time = 0;  // in nanoseconds
+    Proactor* owner = nullptr;
   };
   static thread_local TLInfo tl_info_;
 };
