@@ -304,7 +304,7 @@ template <typename Func> auto Proactor::AwaitBrief(Func&& f) -> decltype(f()) {
 
   fibers_ext::Done done;
   using ResultType = decltype(f());
-  detail::ResultMover<ResultType> mover;
+  fibers_ext::detail::ResultMover<ResultType> mover;
 
   // Store done-ptr by value to increase the refcount while lambda is running.
   AsyncBrief([&mover, f = std::forward<Func>(f), done]() mutable {
@@ -327,7 +327,7 @@ template <typename Func> auto Proactor::AwaitBlocking(Func&& f) -> decltype(f())
   }
 
   using ResultType = decltype(f());
-  detail::ResultMover<ResultType> mover;
+  fibers_ext::detail::ResultMover<ResultType> mover;
   auto fb = LaunchFiber([&] { mover.Apply(std::forward<Func>(f)); });
   fb.join();
 

@@ -18,10 +18,7 @@ ostream& operator<<(ostream& o, const ::boost::fibers::channel_op_status op);
 
 namespace util {
 
-enum DoneWaitDirective {
-  AND_NOTHING = 0,
-  AND_RESET = 1
-};
+enum DoneWaitDirective { AND_NOTHING = 0, AND_RESET = 1 };
 
 namespace fibers_ext {
 
@@ -32,7 +29,6 @@ inline uint16_t short_id(::boost::fibers::context* ctx) {
 inline uint16_t short_id() {
   return short_id(::boost::fibers::context::active());
 }
-
 
 // Wrap canonical pattern for condition_variable + bool flag
 // We can not synchronize threads with a condition-like variable on a stack.
@@ -45,7 +41,8 @@ inline uint16_t short_id() {
 class Done {
   class Impl {
    public:
-    Impl() : ready_(false) {}
+    Impl() : ready_(false) {
+    }
     Impl(const Impl&) = delete;
     void operator=(const Impl&) = delete;
 
@@ -82,9 +79,13 @@ class Done {
       ec_.notify();
     }
 
-    void Reset() { ready_ = false; }
+    void Reset() {
+      ready_ = false;
+    }
 
-    bool IsReady() const { return ready_.load(std::memory_order_acquire); }
+    bool IsReady() const {
+      return ready_.load(std::memory_order_acquire);
+    }
 
    private:
     EventCount ec_;
@@ -94,13 +95,21 @@ class Done {
   using ptr_t = ::boost::intrusive_ptr<Impl>;
 
  public:
-  Done() : impl_(new Impl) {}
-  ~Done() {}
+  Done() : impl_(new Impl) {
+  }
+  ~Done() {
+  }
 
-  void Notify() { impl_->Notify(); }
-  bool Wait(DoneWaitDirective reset = AND_NOTHING) { return impl_->Wait(reset); }
+  void Notify() {
+    impl_->Notify();
+  }
+  bool Wait(DoneWaitDirective reset = AND_NOTHING) {
+    return impl_->Wait(reset);
+  }
 
-  void Reset() { impl_->Reset(); }
+  void Reset() {
+    impl_->Reset();
+  }
 
  private:
   ptr_t impl_;
@@ -109,7 +118,8 @@ class Done {
 class BlockingCounter {
   class Impl {
    public:
-    Impl(unsigned count) : count_(count) {}
+    Impl(unsigned count) : count_(count) {
+    }
     Impl(const Impl&) = delete;
     void operator=(const Impl&) = delete;
 
@@ -124,7 +134,7 @@ class BlockingCounter {
       }
     }
 
-   // I suspect all memory order accesses here could be "relaxed" but I do not bother.
+    // I suspect all memory order accesses here could be "relaxed" but I do not bother.
     void Wait() {
       ec_.await([this] { return 0 == count_.load(std::memory_order_acquire); });
     }
@@ -143,13 +153,20 @@ class BlockingCounter {
   using ptr_t = ::boost::intrusive_ptr<Impl>;
 
  public:
-  explicit BlockingCounter(unsigned count) : impl_(new Impl(count)) {}
+  explicit BlockingCounter(unsigned count) : impl_(new Impl(count)) {
+  }
 
-  void Dec() { impl_->Dec(); }
+  void Dec() {
+    impl_->Dec();
+  }
 
-  void Wait() { impl_->Wait(); }
+  void Wait() {
+    impl_->Wait();
+  }
 
-  void Add(unsigned delta) { impl_->count_.fetch_add(delta, std::memory_order_acq_rel); }
+  void Add(unsigned delta) {
+    impl_->count_.fetch_add(delta, std::memory_order_acq_rel);
+  }
 
  private:
   ptr_t impl_;
@@ -157,7 +174,8 @@ class BlockingCounter {
 
 class Semaphore {
  public:
-  Semaphore(uint32_t cnt) : count_(cnt) {}
+  Semaphore(uint32_t cnt) : count_(cnt) {
+  }
 
   void Wait(uint32_t nr = 1) {
     std::unique_lock<::boost::fibers::mutex> lock(mutex_);
@@ -185,8 +203,10 @@ class Semaphore {
 
 // For synchronizing fibers in single-threaded environment.
 struct NoOpLock {
-  void lock() {}
-  void unlock() {}
+  void lock() {
+  }
+  void unlock() {
+  }
 };
 
 template <typename Pred> void Await(::boost::fibers::condition_variable_any& cv, Pred&& pred) {
@@ -204,7 +224,9 @@ template <typename T> class Cell {
   ::boost::fibers::condition_variable_any cv_;
 
  public:
-  bool IsEmpty() const { return !bool(val_); }
+  bool IsEmpty() const {
+    return !bool(val_);
+  }
 
   // Might block the calling fiber.
   void Emplace(T&& val) {
@@ -227,28 +249,34 @@ template <typename T> class Cell {
   }
 };
 
-}  // namespace fibers_ext
-
 namespace detail {
 
 template <typename R> class ResultMover {
   R r_;  // todo: to set as optional to support objects without default c'tor.
  public:
-  template <typename Func> void Apply(Func&& f) { r_ = f(); }
+  template <typename Func> void Apply(Func&& f) {
+    r_ = f();
+  }
 
   // Returning rvalue-reference means returning the same object r_ instead of creating a
   // temporary R{r_}. Please note that when we return function-local object, we do not need to
   // return rvalue because RVO eliminates redundant object creation.
   // But for returning data member r_ it's more efficient.
   // "get() &&" means you can call this function only on rvalue ResultMover&& object.
-  R&& get() && { return std::forward<R>(r_); }
+  R&& get() && {
+    return std::forward<R>(r_);
+  }
 };
 
 template <> class ResultMover<void> {
  public:
-  template <typename Func> void Apply(Func&& f) { f(); }
-  void get() {}
+  template <typename Func> void Apply(Func&& f) {
+    f();
+  }
+  void get() {
+  }
 };
 
-}  // namespace detail
+}  // namespace detail0
+}  // namespace fibers_ext
 }  // namespace util
