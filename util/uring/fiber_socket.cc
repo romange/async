@@ -176,7 +176,7 @@ auto FiberSocket::Accept(FiberSocket* peer) -> error_code {
     int res =
         accept4(real_fd, (struct sockaddr*)&client_addr, &addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
     if (res >= 0) {
-      *peer = FiberSocket{res};
+      *peer = FiberSocket{res, nullptr};
       return ec;
     }
 
