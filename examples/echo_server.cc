@@ -79,6 +79,7 @@ void EchoConnection::HandleRequests() {
     if (FiberSocket::IsConnClosed(ec))
       break;
     CHECK(!ec) << ec;
+    ping_qps.Inc();
 
     vec[0].iov_base = buf;
     vec[0].iov_len = 4;
@@ -88,7 +89,6 @@ void EchoConnection::HandleRequests() {
     auto res = socket_.Send(vec, 2);
     CHECK(res.has_value());
   }
-  socket_.Shutdown(SHUT_RDWR);
 }
 
 class EchoListener : public uring::ListenerInterface {
@@ -120,6 +120,7 @@ class Driver {
   Driver(const tcp::endpoint& ep, Proactor* p) : sock_(p) {
     auto ec = sock_.Connect(ep);
     CHECK(!ec) << ec;
+    VLOG(1) << "Connected to " << sock_.RemoteEndpoint();
   }
 
   void Run(base::Histogram* dest);
@@ -150,6 +151,7 @@ void Driver::Run(base::Histogram* dest) {
     uint64_t dur = absl::GetCurrentTimeNanos() - start;
     hist.Add(dur / 1000);
   }
+  sock_.Shutdown(SHUT_RDWR);
   dest->Merge(hist);
 }
 
@@ -193,9 +195,11 @@ int main(int argc, char* argv[]) {
     auto start = absl::GetCurrentTimeNanos();
     pp.AwaitFiberOnAll([&](Proactor* p) { RunClient(*results.begin(), p); });
     auto dur = absl::GetCurrentTimeNanos() - start;
-    auto dur_ms = dur / 1000000;
+    size_t dur_ms = std::max<size_t>(1, dur / 1000000);
+    size_t dur_sec = std::max<size_t>(1, dur_ms / 1000);
+
     CONSOLE_INFO << "Total time " << dur_ms << " ms, average qps: "
-                 << (pp.size() * size_t(FLAGS_c) * FLAGS_n) / (dur_ms / 1000) << "\n";
+                 << (pp.size() * size_t(FLAGS_c) * FLAGS_n) / dur_sec << "\n";
     CONSOLE_INFO << "Overall latency (usec) " << lat_hist.ToString();
   }
   pp.Stop();
