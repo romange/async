@@ -198,7 +198,7 @@ endif ()
 
 FetchContent_Declare(
     abseil_cpp
-    URL https://github.com/abseil/abseil-cpp/archive/20200225.2.zip
+    URL https://github.com/abseil/abseil-cpp/archive/20200923.zip
 )
 FetchContent_GetProperties(abseil_cpp)
 if(NOT abseil_cpp_POPULATED)
@@ -209,7 +209,7 @@ endif()
 
 
 # set(Boost_DEBUG ON)
-find_package(Boost 1.70.0 REQUIRED COMPONENTS fiber context system)
+find_package(Boost 1.71.0 REQUIRED COMPONENTS fiber context system)
 Message(STATUS "Found Boost ${Boost_LIBRARY_DIRS} ${Boost_LIB_VERSION} ${Boost_VERSION}")
 
 add_definitions(-DBOOST_BEAST_SEPARATE_COMPILATION -DBOOST_ASIO_SEPARATE_COMPILATION)
@@ -217,10 +217,10 @@ add_definitions(-DBOOST_BEAST_SEPARATE_COMPILATION -DBOOST_ASIO_SEPARATE_COMPILA
 
 # TODO: On aarch64 heap profiler does not work, need to investigate it.
 if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
-  set(PERF_TOOLS_LIB "libtcmalloc_and_profiler.so")
+  set(PERF_TOOLS_LIB "libtcmalloc_and_profiler.a")
 else()
   set(PERF_TOOLS_OPTS --disable-heap-checker --disable-debugalloc --disable-heap-profiler)
-  set(PERF_TOOLS_LIB "libprofiler.so")
+  set(PERF_TOOLS_LIB "libprofiler.a")
 endif()
 
 add_third_party(
@@ -228,7 +228,7 @@ add_third_party(
   GIT_REPOSITORY https://github.com/gperftools/gperftools/
   GIT_TAG gperftools-2.8
   PATCH_COMMAND ./autogen.sh
-  CONFIGURE_COMMAND <SOURCE_DIR>/configure --enable-frame-pointers --enable-static=no
+  CONFIGURE_COMMAND <SOURCE_DIR>/configure --enable-frame-pointers --enable-static=yes
                     --enable-libunwind "CXXFLAGS=${THIRD_PARTY_CXX_FLAGS}"
                     --disable-deprecated-pprof --enable-aggressive-decommit-by-default
                     --prefix=${THIRD_PARTY_LIB_DIR}/gperf ${PERF_TOOLS_OPTS}
