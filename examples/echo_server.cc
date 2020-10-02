@@ -70,30 +70,46 @@ void EchoConnection::HandleRequests() {
   system::error_code ec;
   size_t sz;
   iovec vec[2];
-  uint8_t buf[4];
+  uint8_t buf[8];
 
   if (FLAGS_size <= 0) {
+    #if 0
     Proactor* p = socket_.proactor();
 
     msghdr msg;
     memset(&msg, 0, sizeof(msg));
     msg.msg_iov = vec;
     msg.msg_iovlen = 1;
+    #endif
     vec[0].iov_base = buf;
-    vec[0].iov_len = 4;
+    vec[0].iov_len = 8;
 
     while (true) {
-      uring::SubmitEntry se1 = p->GetSubmitEntry(nullptr, 0);
-      se1.PrepRecvMsg(socket_.RealFd(), &msg, 0);
-      se1.sqe()->flags |= IOSQE_IO_LINK;
-      auto res = socket_.Send(asio::buffer(buf, 4));
+      auto res = socket_.Recv(asio::buffer(buf, 8));
+      if (!res.has_value()) {
+        if (!FiberSocket::IsConnClosed(res.error())) {
+          LOG(WARNING) << "Broke on " << res.error();
+        }
+        break;
+      }
+      CHECK_EQ(8u, res.value());
+
+      uint64_t sender_ts = absl::little_endian::Load64(buf);
+      uint64_t recv_now = absl::GetCurrentTimeNanos();
+      absl::little_endian::Store64(buf, recv_now);
+      res = socket_.Send(asio::buffer(buf, 8));
       if (res.has_value()) {
-        CHECK_EQ(4u, res.value());
+        CHECK_EQ(8u, res.value());
       } else {
         if (!FiberSocket::IsConnClosed(res.error())) {
           LOG(INFO) << "Broke on " << res.error();
         }
         break;
+      }
+      int64_t recv_delay_usec = (recv_now - sender_ts) / 1000;
+      int64_t send_del_usec = (absl::GetCurrentTimeNanos() - recv_now) / 1000;
+      if (recv_delay_usec >= 10000 || send_del_usec > 5000) {
+        LOG(INFO) << "Recv delay: " << recv_delay_usec << ", send delay " << send_del_usec;
       }
     }
   } else {
@@ -153,11 +169,11 @@ class Driver {
 
 void Driver::Run(base::Histogram* dest) {
   iovec vec[2];
-  uint8_t buf[4];
+  uint8_t buf[8];
 
   absl::little_endian::Store32(buf, FLAGS_size);
   vec[0].iov_base = buf;
-  vec[0].iov_len = 4;
+  vec[0].iov_len = 8;
   base::Histogram hist;
 
   if (FLAGS_size <= 0) {
@@ -167,15 +183,22 @@ void Driver::Run(base::Histogram* dest) {
     msg.msg_iovlen = 1;
     Proactor* p = socket_.proactor();
     for (unsigned i = 0; i < FLAGS_n; ++i) {
-      auto start = absl::GetCurrentTimeNanos();
+      uint64_t start = absl::GetCurrentTimeNanos();
+      absl::little_endian::Store64(buf, start);
       uring::SubmitEntry se1 = p->GetSubmitEntry(nullptr, 0);
       se1.PrepSendMsg(socket_.RealFd(), &msg, 0);
       se1.sqe()->flags |= IOSQE_IO_LINK;
-      auto res = socket_.Recv(asio::buffer(buf, 4));
+      auto res = socket_.Recv(asio::buffer(buf, 8));
       CHECK(res.has_value());
-      CHECK_EQ(4u, res.value());
-      uint64_t dur = absl::GetCurrentTimeNanos() - start;
-      hist.Add(dur / 1000);
+      CHECK_EQ(8u, res.value());
+
+      uint64_t now = absl::GetCurrentTimeNanos();
+      uint64_t dur_usec = (now - start) / 1000;
+      uint64_t srv_snd = absl::little_endian::Load64(buf);
+      hist.Add(dur_usec);
+      if (dur_usec > 20000) {  // 20ms
+        LOG(INFO) << "RTT " << dur_usec << ", recv delay " << (now - srv_snd) / 1000;
+      }
     }
   } else {
     std::unique_ptr<uint8_t[]> msg(new uint8_t[FLAGS_size]);
