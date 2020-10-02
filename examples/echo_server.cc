@@ -30,7 +30,7 @@ DEFINE_int32(http_port, 8080, "Http port.");
 DEFINE_int32(port, 8081, "Redis port");
 DEFINE_uint32(n, 1000, "Number of requests per connection");
 DEFINE_uint32(c, 10, "Number of connections per thread");
-DEFINE_uint32(size, 8, "Message size");
+DEFINE_uint32(size, 0, "Message size, 0 for hardcoded 4 byte pings");
 DEFINE_string(connect, "", "hostname or ip address to connect to in client mode");
 
 uring::VarzQps ping_qps("ping-qps");
@@ -40,8 +40,6 @@ class EchoConnection : public uring::Connection {
   EchoConnection() {
     work_buf_.reset(new uint8_t[1 << 16]);
   }
-
-  void Handle(IoResult res, int32_t payload, Proactor* mgr);
 
  private:
   void HandleRequests() final;
@@ -74,20 +72,46 @@ void EchoConnection::HandleRequests() {
   iovec vec[2];
   uint8_t buf[4];
 
-  while (true) {
-    ec = ReadMsg(&sz);
-    if (FiberSocket::IsConnClosed(ec))
-      break;
-    CHECK(!ec) << ec;
-    ping_qps.Inc();
+  if (FLAGS_size <= 0) {
+    Proactor* p = socket_.proactor();
 
+    msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_iov = vec;
+    msg.msg_iovlen = 1;
     vec[0].iov_base = buf;
     vec[0].iov_len = 4;
-    absl::little_endian::Store32(buf, sz);
-    vec[1].iov_base = work_buf_.get();
-    vec[1].iov_len = sz;
-    auto res = socket_.Send(vec, 2);
-    CHECK(res.has_value());
+
+    while (true) {
+      uring::SubmitEntry se1 = p->GetSubmitEntry(nullptr, 0);
+      se1.PrepRecvMsg(socket_.RealFd(), &msg, 0);
+      se1.sqe()->flags |= IOSQE_IO_LINK;
+      auto res = socket_.Send(asio::buffer(buf, 4));
+      if (res.has_value()) {
+        CHECK_EQ(4u, res.value());
+      } else {
+        if (!FiberSocket::IsConnClosed(res.error())) {
+          LOG(INFO) << "Broke on " << res.error();
+        }
+        break;
+      }
+    }
+  } else {
+    while (true) {
+      ec = ReadMsg(&sz);
+      if (FiberSocket::IsConnClosed(ec))
+        break;
+      CHECK(!ec) << ec;
+      ping_qps.Inc();
+
+      vec[0].iov_base = buf;
+      vec[0].iov_len = 4;
+      absl::little_endian::Store32(buf, sz);
+      vec[1].iov_base = work_buf_.get();
+      vec[1].iov_len = sz;
+      auto res = socket_.Send(vec, 2);
+      CHECK(res.has_value());
+    }
   }
 }
 
@@ -113,45 +137,66 @@ void RunServer(ProactorPool* pp) {
 }
 
 class Driver {
-  FiberSocket sock_;
+  FiberSocket socket_;
 
   Driver(const Driver&) = delete;
+
  public:
-  Driver(const tcp::endpoint& ep, Proactor* p) : sock_(p) {
-    auto ec = sock_.Connect(ep);
+  Driver(const tcp::endpoint& ep, Proactor* p) : socket_(p) {
+    auto ec = socket_.Connect(ep);
     CHECK(!ec) << ec;
-    VLOG(1) << "Connected to " << sock_.RemoteEndpoint();
+    VLOG(1) << "Connected to " << socket_.RemoteEndpoint();
   }
 
   void Run(base::Histogram* dest);
-
 };
 
 void Driver::Run(base::Histogram* dest) {
   iovec vec[2];
   uint8_t buf[4];
+
   absl::little_endian::Store32(buf, FLAGS_size);
-  std::unique_ptr<uint8_t[]> msg(new uint8_t[FLAGS_size]);
   vec[0].iov_base = buf;
   vec[0].iov_len = 4;
-  vec[1].iov_base = msg.get();
-  vec[1].iov_len = FLAGS_size;
   base::Histogram hist;
 
-  for (unsigned msg = 0; msg < FLAGS_n; ++msg) {
-    auto start = absl::GetCurrentTimeNanos();
-    auto res = sock_.Send(vec, 2);
-    CHECK(res.has_value()) << res.error();
-    CHECK_EQ(res.value(), FLAGS_size + 4);
+  if (FLAGS_size <= 0) {
+    msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_iov = vec;
+    msg.msg_iovlen = 1;
+    Proactor* p = socket_.proactor();
+    for (unsigned i = 0; i < FLAGS_n; ++i) {
+      auto start = absl::GetCurrentTimeNanos();
+      uring::SubmitEntry se1 = p->GetSubmitEntry(nullptr, 0);
+      se1.PrepSendMsg(socket_.RealFd(), &msg, 0);
+      se1.sqe()->flags |= IOSQE_IO_LINK;
+      auto res = socket_.Recv(asio::buffer(buf, 4));
+      CHECK(res.has_value());
+      CHECK_EQ(4u, res.value());
+      uint64_t dur = absl::GetCurrentTimeNanos() - start;
+      hist.Add(dur / 1000);
+    }
+  } else {
+    std::unique_ptr<uint8_t[]> msg(new uint8_t[FLAGS_size]);
+    vec[1].iov_base = msg.get();
+    vec[1].iov_len = FLAGS_size;
 
-    auto res2 = sock_.Recv(vec, 2);
-    CHECK(res.has_value()) << res.error();
-    CHECK_EQ(res2.value(), FLAGS_size + 4);
+    for (unsigned i = 0; i < FLAGS_n; ++i) {
+      auto start = absl::GetCurrentTimeNanos();
+      auto res = socket_.Send(vec, 2);
+      CHECK(res.has_value()) << res.error();
+      CHECK_EQ(res.value(), size_t(FLAGS_size + 4));
 
-    uint64_t dur = absl::GetCurrentTimeNanos() - start;
-    hist.Add(dur / 1000);
+      auto res2 = socket_.Recv(vec, 2);
+      CHECK(res.has_value()) << res.error();
+      CHECK_EQ(res2.value(), size_t(FLAGS_size + 4));
+
+      uint64_t dur = absl::GetCurrentTimeNanos() - start;
+      hist.Add(dur / 1000);
+    }
   }
-  sock_.Shutdown(SHUT_RDWR);
+  socket_.Shutdown(SHUT_RDWR);
   dest->Merge(hist);
 }
 
@@ -198,13 +243,12 @@ int main(int argc, char* argv[]) {
     size_t dur_ms = std::max<size_t>(1, dur / 1000000);
     size_t dur_sec = std::max<size_t>(1, dur_ms / 1000);
 
-    CONSOLE_INFO << "Total time " << dur_ms << " ms, average qps: "
-                 << (pp.size() * size_t(FLAGS_c) * FLAGS_n) / dur_sec << "\n";
+    CONSOLE_INFO << "Total time " << dur_ms
+                 << " ms, average qps: " << (pp.size() * size_t(FLAGS_c) * FLAGS_n) / dur_sec
+                 << "\n";
     CONSOLE_INFO << "Overall latency (usec) " << lat_hist.ToString();
   }
   pp.Stop();
-
-
 
   return 0;
 }

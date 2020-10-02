@@ -378,7 +378,7 @@ auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
   return nonstd::make_unexpected(std::move(ec));
 }
 
-inline int FiberSocket::RealFd() const {
+int FiberSocket::RealFd() const {
   return p_ ? p_->TranslateFixedFd(fd_ & FD_MASK) : fd_ & FD_MASK;
 }
 
