@@ -73,17 +73,17 @@ void EchoConnection::HandleRequests() {
   uint8_t buf[8];
 
   if (FLAGS_size <= 0) {
-    #if 0
+#if 0
     Proactor* p = socket_.proactor();
 
     msghdr msg;
     memset(&msg, 0, sizeof(msg));
     msg.msg_iov = vec;
     msg.msg_iovlen = 1;
-    #endif
+#endif
     vec[0].iov_base = buf;
     vec[0].iov_len = 8;
-
+    uint64 num_req = 0;
     while (true) {
       auto res = socket_.Recv(asio::buffer(buf, 8));
       if (!res.has_value()) {
@@ -94,8 +94,9 @@ void EchoConnection::HandleRequests() {
       }
       CHECK_EQ(8u, res.value());
 
-      uint64_t sender_ts = absl::little_endian::Load64(buf);
-      uint64_t recv_now = absl::GetCurrentTimeNanos();
+      int64_t sender_ts = absl::little_endian::Load64(buf);
+      int64_t recv_now = absl::GetCurrentTimeNanos();
+
       absl::little_endian::Store64(buf, recv_now);
       res = socket_.Send(asio::buffer(buf, 8));
       if (res.has_value()) {
@@ -106,10 +107,13 @@ void EchoConnection::HandleRequests() {
         }
         break;
       }
-      int64_t recv_delay_usec = (recv_now - sender_ts) / 1000;
-      int64_t send_del_usec = (absl::GetCurrentTimeNanos() - recv_now) / 1000;
-      if (recv_delay_usec >= 10000 || send_del_usec > 5000) {
-        LOG(INFO) << "Recv delay: " << recv_delay_usec << ", send delay " << send_del_usec;
+
+      if (++num_req > 10) {
+        int64_t recv_delay_usec = (recv_now - sender_ts) / 1000;
+        int64_t send_del_usec = (absl::GetCurrentTimeNanos() - recv_now) / 1000;
+        if (recv_delay_usec >= 10000 || send_del_usec > 5000) {
+          LOG(INFO) << "Recv delay: " << recv_delay_usec << ", send delay " << send_del_usec;
+        }
       }
     }
   } else {
@@ -158,60 +162,79 @@ class Driver {
   Driver(const Driver&) = delete;
 
  public:
-  Driver(const tcp::endpoint& ep, Proactor* p) : socket_(p) {
-    auto ec = socket_.Connect(ep);
-    CHECK(!ec) << ec;
-    VLOG(1) << "Connected to " << socket_.RemoteEndpoint();
-  }
+  Driver(const tcp::endpoint& ep, Proactor* p);
 
   void Run(base::Histogram* dest);
+
+ private:
+  void SendRcvPing(Proactor* p);
+  msghdr msg_;
+  uint8_t buf_[8];
+  iovec vec_[2];
 };
 
-void Driver::Run(base::Histogram* dest) {
-  iovec vec[2];
-  uint8_t buf[8];
+Driver::Driver(const tcp::endpoint& ep, Proactor* p) : socket_(p) {
+  auto ec = socket_.Connect(ep);
+  CHECK(!ec) << ec;
+  VLOG(1) << "Connected to " << socket_.RemoteEndpoint();
+  memset(&msg_, 0, sizeof(msg_));
+  msg_.msg_iov = vec_;
+  msg_.msg_iovlen = 1;
+  vec_[0].iov_base = buf_;
+  vec_[0].iov_len = 8;
+}
 
-  absl::little_endian::Store32(buf, FLAGS_size);
-  vec[0].iov_base = buf;
-  vec[0].iov_len = 8;
+void Driver::SendRcvPing(Proactor* p) {
+  uring::SubmitEntry se1 = p->GetSubmitEntry(nullptr, 0);
+  se1.PrepSendMsg(socket_.RealFd(), &msg_, 0);
+  se1.sqe()->flags |= IOSQE_IO_LINK;
+  auto res = socket_.Recv(asio::buffer(buf_, 8));
+  CHECK(res.has_value());
+  CHECK_EQ(8u, res.value());
+}
+
+void Driver::Run(base::Histogram* dest) {
+  vec_[0].iov_base = buf_;
+  vec_[0].iov_len = 8;
   base::Histogram hist;
 
   if (FLAGS_size <= 0) {
-    msghdr msg;
-    memset(&msg, 0, sizeof(msg));
-    msg.msg_iov = vec;
-    msg.msg_iovlen = 1;
     Proactor* p = socket_.proactor();
+    // Warmup
+    for (unsigned i = 0; i < 10; ++i) {
+      uint64_t start = absl::GetCurrentTimeNanos();
+      absl::little_endian::Store64(buf_, start);
+      SendRcvPing(p);
+    }
+
     for (unsigned i = 0; i < FLAGS_n; ++i) {
       uint64_t start = absl::GetCurrentTimeNanos();
-      absl::little_endian::Store64(buf, start);
-      uring::SubmitEntry se1 = p->GetSubmitEntry(nullptr, 0);
-      se1.PrepSendMsg(socket_.RealFd(), &msg, 0);
-      se1.sqe()->flags |= IOSQE_IO_LINK;
-      auto res = socket_.Recv(asio::buffer(buf, 8));
-      CHECK(res.has_value());
-      CHECK_EQ(8u, res.value());
+      absl::little_endian::Store64(buf_, start);
 
+      SendRcvPing(p);
       uint64_t now = absl::GetCurrentTimeNanos();
       uint64_t dur_usec = (now - start) / 1000;
-      uint64_t srv_snd = absl::little_endian::Load64(buf);
+      uint64_t srv_snd = absl::little_endian::Load64(buf_);
       hist.Add(dur_usec);
       if (dur_usec > 20000) {  // 20ms
         LOG(INFO) << "RTT " << dur_usec << ", recv delay " << (now - srv_snd) / 1000;
       }
     }
   } else {
+    absl::little_endian::Store32(buf_, FLAGS_size);
     std::unique_ptr<uint8_t[]> msg(new uint8_t[FLAGS_size]);
-    vec[1].iov_base = msg.get();
-    vec[1].iov_len = FLAGS_size;
+
+    vec_[0].iov_len = 4;
+    vec_[1].iov_base = msg.get();
+    vec_[1].iov_len = FLAGS_size;
 
     for (unsigned i = 0; i < FLAGS_n; ++i) {
       auto start = absl::GetCurrentTimeNanos();
-      auto res = socket_.Send(vec, 2);
+      auto res = socket_.Send(vec_, 2);
       CHECK(res.has_value()) << res.error();
       CHECK_EQ(res.value(), size_t(FLAGS_size + 4));
 
-      auto res2 = socket_.Recv(vec, 2);
+      auto res2 = socket_.Recv(vec_, 2);
       CHECK(res.has_value()) << res.error();
       CHECK_EQ(res2.value(), size_t(FLAGS_size + 4));
 
