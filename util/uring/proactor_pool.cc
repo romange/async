@@ -61,6 +61,10 @@ void ProactorPool::Run(uint32_t ring_depth) {
   state_ = RUN;
 
   AwaitOnAll([](unsigned index, Proactor*) {
+    // It seems to simplify things in kernel for io_uring.
+    // https://github.com/axboe/liburing/issues/218
+    // I am not sure what's how it impacts higher application levels.
+    unshare(CLONE_FS);
     Proactor::SetIndex(index);
   });
 

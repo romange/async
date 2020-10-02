@@ -298,10 +298,10 @@ auto FiberSocket::Send(const iovec* ptr, size_t len) -> expected_size_t {
     }
     DVSOCK(1) << "Got " << res;
     res = -res;
-    if (res == EAGAIN || res == EBUSY)
+    if (res == EAGAIN)  // EAGAIN can happen in case of CQ overflow.
       continue;
 
-    if (base::_in(res, {ECONNABORTED, EPIPE, ECONNRESET})) {
+    if (base::_in(res, {ECONNABORTED, EPIPE, ECONNRESET, ECANCELED})) {
       if (res == EPIPE)  // We do not care about EPIPE that can happen when we shutdown our socket.
         res = ECONNABORTED;
       break;
@@ -358,13 +358,13 @@ auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
     DVSOCK(1) << "Got " << res;
 
     res = -res;
-    if (res == EAGAIN || res == EBUSY)
+    if (res == EAGAIN) // EAGAIN can happen in case of CQ overflow.
       continue;
 
     if (res == 0)
       res = ECONNABORTED;
 
-    if (base::_in(res, {ECONNABORTED, EPIPE, ECONNRESET})) {
+    if (base::_in(res, {ECONNABORTED, EPIPE, ECONNRESET, ECANCELED})) {
       break;
     }
 
