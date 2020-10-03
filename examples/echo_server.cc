@@ -2,6 +2,13 @@
 // Author: Roman Gershman (romange@gmail.com)
 //
 
+// clang-format off
+#include <sys/time.h>
+
+#include <linux/errqueue.h>
+#include <linux/net_tstamp.h>
+// clang-format on
+
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/read.hpp>
 
@@ -73,32 +80,58 @@ void EchoConnection::HandleRequests() {
   uint8_t buf[8];
 
   if (FLAGS_size <= 0) {
-#if 0
-    Proactor* p = socket_.proactor();
-
-    msghdr msg;
-    memset(&msg, 0, sizeof(msg));
-    msg.msg_iov = vec;
-    msg.msg_iovlen = 1;
-#endif
     vec[0].iov_base = buf;
     vec[0].iov_len = 8;
     uint64 num_req = 0;
+
+    msghdr msg;
+
     while (true) {
-      auto res = socket_.Recv(asio::buffer(buf, 8));
-      if (!res.has_value()) {
-        if (!FiberSocket::IsConnClosed(res.error())) {
-          LOG(WARNING) << "Broke on " << res.error();
+      memset(&msg, 0, sizeof(msg));
+      msg.msg_iov = vec;
+      msg.msg_iovlen = 1;
+
+// msg_control is not supported in io_uring until 5.10 at least.
+#if 0
+    const int CMSG_SIZE = 1024;
+    char cmsg_buf[CMSG_SIZE];
+    int so_opt = SOF_TIMESTAMPING_RX_SOFTWARE | SOF_TIMESTAMPING_SOFTWARE;
+
+       msg.msg_control = cmsg_buf;
+       msg.msg_controllen = sizeof(cmsg_buf);
+
+      // setsockopt SO_TIMESTAMPING must be done before each recvmsg call - it's per recv request.
+      // Its seems we need usleep as well though it's super weird and looks like a hack.
+      CHECK_EQ(0, setsockopt (socket_.RealFd(), SOL_SOCKET, SO_TIMESTAMPING, &so_opt, sizeof(so_opt)))
+       << strerror(errno);
+      // usleep(20000); /* setsockopt for SO_TIMESTAMPING is asynchronous */
+
+      auto res1 = recvmsg(socket_.RealFd(), &msg, 0);
+      CHECK_EQ(res1, 8) << errno;
+#endif
+      auto res1 = socket_.RecvMsg(msg, 0);
+      if (!res1.has_value()) {
+        if (!FiberSocket::IsConnClosed(res1.error())) {
+          LOG(WARNING) << "Broke on " << res1.error();
         }
         break;
       }
-      CHECK_EQ(8u, res.value());
+      CHECK_EQ(8u, res1.value());
 
-      int64_t sender_ts = absl::little_endian::Load64(buf);
       int64_t recv_now = absl::GetCurrentTimeNanos();
 
+      for (cmsghdr* cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        CHECK_EQ(cmsg->cmsg_level, SOL_SOCKET);
+        CHECK_EQ(cmsg->cmsg_type, SCM_TIMESTAMPING);
+        struct scm_timestamping* ts = (struct scm_timestamping*)CMSG_DATA(cmsg);
+        CHECK(ts);
+        VLOG(1) << "[" << num_req << "] " << ts->ts[0].tv_sec << " " << ts->ts[1].tv_sec << " "
+                << ts->ts[2].tv_sec;
+      }
+      int64_t sender_ts = absl::little_endian::Load64(buf);
+
       absl::little_endian::Store64(buf, recv_now);
-      res = socket_.Send(asio::buffer(buf, 8));
+      auto res = socket_.Send(asio::buffer(buf, 8));
       if (res.has_value()) {
         CHECK_EQ(8u, res.value());
       } else {
