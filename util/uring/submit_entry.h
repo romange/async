@@ -24,7 +24,7 @@ class SubmitEntry {
     sqe_->poll_events = mask;
   }
 
-  void PrepRecvMsg(int fd, struct msghdr* msg, unsigned flags) {
+  void PrepRecvMsg(int fd, const struct msghdr* msg, unsigned flags) {
     PrepFd(IORING_OP_RECVMSG, fd);
     sqe_->addr = (unsigned long)msg;
     sqe_->len = 1;

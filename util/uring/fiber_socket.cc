@@ -315,19 +315,13 @@ auto FiberSocket::Send(const iovec* ptr, size_t len) -> expected_size_t {
   return nonstd::make_unexpected(std::move(ec));
 }
 
-auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
-  CHECK_GT(len, 0U);
+auto FiberSocket::RecvMsg(const msghdr& msg, int flags) -> expected_size_t {
   CHECK(p_);
   CHECK_GE(fd_, 0);
 
   if (fd_ & IS_SHUTDOWN) {
     return nonstd::make_unexpected(std::make_error_code(std::errc::connection_aborted));
   }
-
-  msghdr msg;
-  memset(&msg, 0, sizeof(msg));
-  msg.msg_iov = const_cast<iovec*>(ptr);
-  msg.msg_iovlen = len;
   int fd = fd_ & FD_MASK;
 
   // There is a possible data-race bug since GetSubmitEntry can preempt inside
@@ -349,7 +343,7 @@ auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
   ssize_t res;
   while (true) {
     FiberCall fc(p_);
-    fc->PrepRecvMsg(fd, &msg, 0);
+    fc->PrepRecvMsg(fd, &msg, flags);
     res = fc.Get();
 
     if (res > 0) {
@@ -372,10 +366,19 @@ auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
   }
   std::error_code ec(res, std::system_category());
   VSOCK(1) << "Error " << ec << " on " << RemoteEndpoint();
-  expected_size_t es;
-  es.operator bool();
 
   return nonstd::make_unexpected(std::move(ec));
+}
+
+auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
+  CHECK_GT(len, 0U);
+
+  msghdr msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.msg_iov = const_cast<iovec*>(ptr);
+  msg.msg_iovlen = len;
+
+  return RecvMsg(msg, 0);
 }
 
 int FiberSocket::RealFd() const {

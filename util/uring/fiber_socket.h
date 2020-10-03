@@ -64,6 +64,8 @@ class FiberSocket : public SyncStreamInterface {
     return Send(&v, 1);
   }
 
+  expected_size_t RecvMsg(const msghdr& msg, int flags);
+
   expected_size_t Recv(iovec* ptr, size_t len) override;
 
   expected_size_t Recv(const boost::asio::mutable_buffer& mb) {
