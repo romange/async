@@ -114,7 +114,7 @@ constexpr uint64_t kIgnoreIndex = 0;
 constexpr uint64_t kWakeIndex = 1;
 
 constexpr uint64_t kUserDataCbIndex = 1024;
-constexpr uint32_t kSpinLimit = 10;
+constexpr uint32_t kSpinLimit = 120;  // Important to spin, otherwise we saturate eventfd_write.
 
 }  // namespace
 
@@ -260,12 +260,13 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
 
     // Lets spin a bit to make a system a bit more responsive.
     if (++spin_loops < kSpinLimit) {
+      usleep(spin_loops*10);
       // We should not spin using sched_yield it burns fuckload of cpu.
       continue;
     }
 
     spin_loops = 0;  // Reset the spinning.
-    pthread_yield();
+    // pthread_yield();
 
     /**
      * If tq_seq_ has changed since it was cached into tq_seq, then

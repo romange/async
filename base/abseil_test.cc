@@ -24,8 +24,14 @@ TEST_F(AbseilTest, VDSO) {
   debugging_internal::VDSOSupport vdso;
   vdso.Init();
   for (auto it = vdso.begin(); it != vdso.end(); ++it) {
-    LOG(INFO) << it->name << ": " << it->version;
+    LOG(INFO) << it->name << ": " << it->version << " " << ELF64_ST_TYPE(it->symbol->st_info);
   }
+  absl::debugging_internal::VDSOSupport::SymbolInfo symbol_info;
+#if defined(__aarch64__)
+  EXPECT_TRUE(vdso.LookupSymbol("__kernel_rt_sigreturn", "LINUX_2.6.39", STT_FUNC, &symbol_info));
+#else
+  EXPECT_TRUE(vdso.LookupSymbol("__vdso_clock_gettime", "LINUX_2.6", STT_FUNC, &symbol_info));
+#endif
 }
 
 
