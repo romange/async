@@ -9,6 +9,7 @@ add_library(gtest_main_ext gtest_main.cc)
 target_link_libraries(gtest_main_ext gmock base benchmark TRDP::gperf)
 
 cxx_test(mpmc_bounded_queue_test base LABELS CI)
+cxx_test(abseil_test base LABELS CI)
 cxx_test(arena_test base LABELS CI)
 cxx_test(bits_test base LABELS CI)
 cxx_test(pod_array_test base LABELS CI)
