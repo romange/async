@@ -47,16 +47,15 @@ inline int sys_io_uring_enter(int fd, unsigned to_submit, unsigned min_complete,
   return syscall(__NR_io_uring_enter, fd, to_submit, min_complete, flags, sig, _NSIG / 8);
 }
 
-ABSL_ATTRIBUTE_NOINLINE int wait_for_cqe(io_uring* ring, sigset_t* sig = NULL) {
+ABSL_ATTRIBUTE_NOINLINE void wait_for_cqe(io_uring* ring, unsigned wait_nr, sigset_t* sig = NULL) {
   // res must be 0 or -1.
-  int res = sys_io_uring_enter(ring->ring_fd, 0, 1, IORING_ENTER_GETEVENTS, sig);
+  int res = sys_io_uring_enter(ring->ring_fd, 0, wait_nr, IORING_ENTER_GETEVENTS, sig);
   if (res == 0 || errno == EINTR)
-    return res;
+    return;
   DCHECK_EQ(-1, res);
   res = errno;
 
   LOG(FATAL) << "Error " << (res) << " evaluating sys_io_uring_enter: " << strerror(res);
-  return 0;
 }
 
 struct signal_state {
@@ -115,7 +114,7 @@ constexpr uint64_t kIgnoreIndex = 0;
 constexpr uint64_t kWakeIndex = 1;
 
 constexpr uint64_t kUserDataCbIndex = 1024;
-constexpr uint32_t kSpinLimit = 200;
+constexpr uint32_t kSpinLimit = 10;
 
 }  // namespace
 
@@ -148,7 +147,6 @@ Proactor::~Proactor() {
       ss->signal_map[i].cb = nullptr;
     }
   }
-
 }
 
 void Proactor::Stop() {
@@ -172,8 +170,8 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
   constexpr size_t kBatchSize = 64;
   struct io_uring_cqe cqes[kBatchSize];
   uint32_t tq_seq = 0;
-  uint32_t num_stalls = 0;
-  uint32_t spin_loops = 0, num_task_runs = 0;
+  uint64_t num_stalls = 0, syscall_peeks = 0;
+  uint64_t spin_loops = 0, num_task_runs = 0;
   Tasklet task;
 
   while (true) {
@@ -234,11 +232,18 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
       sched->suspend();
 
       DVLOG(2) << "Resume ioloop";
+
+      continue;
+    }
+
+    if (cqe_count || io_uring_sq_ready(&ring_) || !task_queue_.empty()) {
       spin_loops = 0;
       continue;
     }
 
-    if (cqe_count || io_uring_sq_ready(&ring_) || num_task_runs > 0) {
+    wait_for_cqe(&ring_, 0);  // nonblocking syscall to dive into kernel space.
+    if (CQReadyCount(ring_)) {
+      ++syscall_peeks;
       spin_loops = 0;
       continue;
     }
@@ -273,8 +278,8 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
       if (is_stopped_)
         break;
       DVLOG(2) << "wait_for_cqe";
-      int res = wait_for_cqe(&ring_);
-      DVLOG(2) << "Woke up " << res << "/" << tq_seq_.load(std::memory_order_acquire);
+      wait_for_cqe(&ring_, 1);
+      DVLOG(2) << "Woke up " << tq_seq_.load(std::memory_order_acquire);
 
       tq_seq = 0;
       ++num_stalls;
@@ -284,7 +289,8 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
     }
   }
 
-  VLOG(1) << "wakeups/stalls: " << tq_wakeups_.load() << "/" << num_stalls;
+  VLOG(1) << "wakeups/stalls/syscall_peeks: " << tq_wakeups_.load() << "/" << num_stalls << "/"
+          << syscall_peeks;
 
   VLOG(1) << "centries size: " << centries_.size();
   centries_.clear();
@@ -456,7 +462,7 @@ SubmitEntry Proactor::GetSubmitEntry(CbType cb, int64_t payload) {
 
     auto& e = centries_[next_free_ce_];
     DCHECK(!e.cb);  // cb is undefined.
-    DVLOG(1) << "GetSubmitEntry: index: " << next_free_ce_ << ", socket: " << payload;
+    DVLOG(2) << "GetSubmitEntry: index: " << next_free_ce_ << ", socket: " << payload;
 
     next_free_ce_ = e.val;
     e.cb = std::move(cb);
@@ -517,7 +523,6 @@ void Proactor::ArmWakeupEvent() {
   sqe->user_data = kWakeIndex;
   sqe->flags |= (register_fd_ ? IOSQE_FIXED_FILE : 0);
 }
-
 
 unsigned Proactor::RegisterFd(int source_fd) {
   if (!register_fd_)

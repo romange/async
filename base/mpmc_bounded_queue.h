@@ -123,7 +123,21 @@ template <typename T> class mpmc_bounded_queue {
     return true;
   }
 
-  size_t capacity() const { return buffer_mask_ + 1; }
+  size_t capacity() const {
+    return buffer_mask_ + 1;
+  }
+
+  // Represents a point in time. The state could change one cpu cycle later.
+  // For single producer cases if a queue is empty it will stay empty until the producer enqueue
+  // into it. For single consumer cases a queue that is not empty will stay not empty until it
+  // deques from it.
+  bool empty() const {
+    size_t pos = dequeue_pos_.load(std::memory_order_relaxed);
+    cell_t* cell = &buffer_[pos & buffer_mask_];
+    size_t seq = cell->sequence.load(std::memory_order_relaxed);
+    intptr_t dif = (intptr_t)seq - (intptr_t)(pos + 1);
+    return dif < 0;
+  }
 
  private:
   struct cell_t {

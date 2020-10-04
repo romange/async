@@ -140,6 +140,7 @@ void EchoConnection::HandleRequests() {
         }
         break;
       }
+      ping_qps.Inc();
 
       if (++num_req > 10) {
         int64_t recv_delay_usec = (recv_now - sender_ts) / 1000;
