@@ -170,11 +170,14 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
   constexpr size_t kBatchSize = 64;
   struct io_uring_cqe cqes[kBatchSize];
   uint32_t tq_seq = 0;
-  uint64_t num_stalls = 0, syscall_peeks = 0;
-  uint64_t spin_loops = 0, num_task_runs = 0, task_interrupts = 0;
+  uint64_t num_stalls = 0, cqe_syscalls = 0, cqe_fetches = 0, loop_cnt = 0;
+
+  uint32_t spin_loops = 0, num_task_runs = 0, task_interrupts = 0;
   Tasklet task;
 
   while (true) {
+    ++loop_cnt;
+
     int num_submitted = io_uring_submit(&ring_);
 
     if (num_submitted >= 0) {
@@ -245,9 +248,10 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
       continue;
     }
 
+    ++cqe_syscalls;
     wait_for_cqe(&ring_, 0);  // nonblocking syscall to dive into kernel space.
     if (CQReadyCount(ring_)) {
-      ++syscall_peeks;
+      ++cqe_fetches;
       spin_loops = 0;
       continue;
     }
@@ -294,9 +298,11 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
     }
   }
 
-  VLOG(1) << "wakeups/stalls/syscall_peeks: " << tq_wakeup_ev_.load() << "/" << num_stalls << "/"
-          << syscall_peeks;
-  VLOG(1) << "tq_full/tq_task_int: " << tq_full_ev_.load() << "/" << task_interrupts;
+  VLOG(1) << "total/stalls/cqe_syscalls/cqe_fetches: " << loop_cnt << "/" << num_stalls << "/"
+          << cqe_syscalls << "/" << cqe_fetches;
+
+  VLOG(1) << "tq_wakeups/tq_full/tq_task_int/algo_notifies: " << tq_wakeup_ev_.load() << "/"
+          << tq_full_ev_.load() << "/" << task_interrupts << "/" << algo_notify_cnt_.load();
 
   VLOG(1) << "centries size: " << centries_.size();
   centries_.clear();

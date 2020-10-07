@@ -244,6 +244,7 @@ class Proactor {
   using EventCount = fibers_ext::EventCount;
 
   FuncQ task_queue_;
+  std::atomic_uint32_t algo_notify_cnt_{0} /* how many times this FiberAlgo woke up others */;
   std::atomic_uint32_t tq_seq_{0}, tq_wakeup_ev_{0}, tq_full_ev_{0};
   EventCount task_queue_avail_, sqe_avail_;
   ::boost::fibers::context* main_loop_ctx_ = nullptr;
