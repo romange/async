@@ -199,11 +199,11 @@ endif ()
 FetchContent_Declare(
     abseil_cpp
     URL https://github.com/abseil/abseil-cpp/archive/20200923.zip
+    PATCH_COMMAND patch -p1 < "${CMAKE_CURRENT_LIST_DIR}/../patches/abseil-20200923.patch"
 )
 FetchContent_GetProperties(abseil_cpp)
 if(NOT abseil_cpp_POPULATED)
   FetchContent_Populate(abseil_cpp)
-
   add_subdirectory(${abseil_cpp_SOURCE_DIR} ${abseil_cpp_BINARY_DIR})
 endif()
 
