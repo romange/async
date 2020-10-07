@@ -3,7 +3,7 @@
 TARGET_BUILD_TYPE=Debug
 BUILD_DIR=build-dbg
 COMPILER=`which g++`
-GENERATOR=''
+GENERATOR='-GNinja'
 LAUNCHER=$(command -v ccache)
 if [ -x $LAUNCHER ]; then
   echo "Using launcher $LAUNCHER"
@@ -28,6 +28,11 @@ do
         GENERATOR='-GNinja'
         shift
         ;;
+    -make)
+        GENERATOR=-G'Unix Makefiles'
+        shift
+        ;;
+
     *)
      echo bad option "$ARG"
      exit 1
@@ -39,6 +44,6 @@ done
 mkdir -p $BUILD_DIR && cd $BUILD_DIR
 set -x
 
-cmake -L -DCMAKE_BUILD_TYPE=$TARGET_BUILD_TYPE -DCMAKE_CXX_COMPILER=$COMPILER $GENERATOR $LAUNCHER ..
+cmake -L -DCMAKE_BUILD_TYPE=$TARGET_BUILD_TYPE -DCMAKE_CXX_COMPILER=$COMPILER "$GENERATOR" $LAUNCHER ..
 
 
