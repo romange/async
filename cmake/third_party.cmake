@@ -159,6 +159,14 @@ FetchContent_GetProperties(glog)
 if (NOT glog_POPULATED)
     FetchContent_Populate(glog)
 
+  # There are bugs with libunwind on aarch64
+  # Also there is something fishy with pthread_rw_lock on aarch64 - glog sproadically fails
+  # inside pthreads code.
+  if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+    set(WITH_UNWIND OFF)
+    set(HAVE_RWLOCK OFF)
+  endif()
+
     # We trick glog into compiling with gflags.
     set(HAVE_LIB_GFLAGS 1)
     set(WITH_GFLAGS OFF)
@@ -167,7 +175,7 @@ if (NOT glog_POPULATED)
     set_property(TARGET glog APPEND PROPERTY
                  INCLUDE_DIRECTORIES $<TARGET_PROPERTY:gflags,INTERFACE_INCLUDE_DIRECTORIES>)
     execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink "${glog_SOURCE_DIR}/src/glog/log_severity.h" "${glog_BINARY_DIR}/glog/log_severity.h")
-endif ()
+endif()
 
 
 FetchContent_Declare(

@@ -9,7 +9,7 @@
 #include <absl/debugging/internal/vdso_support.h>
 #include <absl/debugging/stacktrace.h>
 
-#include <gperftools/profiler.h>
+#include <gperftools/stacktrace.h>
 #include <ucontext.h>
 
 #include "base/gtest.h"
@@ -41,7 +41,7 @@ TEST_F(AbseilTest, VDSO) {
 TEST_F(AbseilTest, PerftoolsProfile) {
   void* stack[256];
 
-  int res = ProfilerGetStackTrace(stack, 255, 1, NULL);
+  int res = ::GetStackTrace(stack, 255, 1);
   ASSERT_GT(res, 5);
 }
 
