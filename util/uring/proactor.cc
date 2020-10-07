@@ -120,7 +120,7 @@ constexpr uint32_t kSpinLimit = 120;  // Important to spin, otherwise we saturat
 
 thread_local Proactor::TLInfo Proactor::tl_info_;
 
-Proactor::Proactor() : task_queue_(256) {
+Proactor::Proactor() : task_queue_(512) {
   wake_fd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
   CHECK_GE(wake_fd_, 0);
   VLOG(1) << "Created wake_fd is " << wake_fd_;
@@ -171,7 +171,7 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
   struct io_uring_cqe cqes[kBatchSize];
   uint32_t tq_seq = 0;
   uint64_t num_stalls = 0, syscall_peeks = 0;
-  uint64_t spin_loops = 0, num_task_runs = 0;
+  uint64_t spin_loops = 0, num_task_runs = 0, task_interrupts = 0;
   Tasklet task;
 
   while (true) {
@@ -202,7 +202,11 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
         task();
         ++num_task_runs;
         tl_info_.monotonic_time = GetClockNanos();
-      } while (task_start + 500000 < tl_info_.monotonic_time && task_queue_.try_dequeue(task));
+        if (task_start + 500000 < tl_info_.monotonic_time) {  // Break after 500usec
+          ++task_interrupts;
+          break;
+        }
+      } while (task_queue_.try_dequeue(task));
 
       task_queue_avail_.notifyAll();
 
@@ -260,8 +264,8 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
 
     // Lets spin a bit to make a system a bit more responsive.
     if (++spin_loops < kSpinLimit) {
-      usleep(spin_loops*10);
-      // We should not spin using sched_yield it burns fuckload of cpu.
+      // usleep(spin_loops);
+      // We should not spin too much using sched_yield or it burns a fuckload of cpu.
       continue;
     }
 
@@ -290,8 +294,9 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
     }
   }
 
-  VLOG(1) << "wakeups/stalls/syscall_peeks: " << tq_wakeups_.load() << "/" << num_stalls << "/"
+  VLOG(1) << "wakeups/stalls/syscall_peeks: " << tq_wakeup_ev_.load() << "/" << num_stalls << "/"
           << syscall_peeks;
+  VLOG(1) << "tq_full/tq_task_int: " << tq_full_ev_.load() << "/" << task_interrupts;
 
   VLOG(1) << "centries size: " << centries_.size();
   centries_.clear();
@@ -377,10 +382,11 @@ void Proactor::Init(size_t ring_size, int wq_fd) {
   tl_info_.owner = this;
 }
 
+// Remember, WakeRing is called from external threads.
 void Proactor::WakeRing() {
   DVLOG(2) << "Wake ring " << tq_seq_.load(std::memory_order_relaxed);
 
-  tq_wakeups_.fetch_add(1, std::memory_order_relaxed);
+  tq_wakeup_ev_.fetch_add(1, std::memory_order_relaxed);
 
   /**
    * It's tempting to use io_uring_prep_nop() here in order to resume wait_cqe() call.

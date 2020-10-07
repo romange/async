@@ -129,7 +129,8 @@ class Proactor {
   template <typename Func> void AsyncBrief(Func&& brief);
 
   //! Similarly to AsyncBrief but waits 'f' to return.
-  template <typename Func> auto AwaitBrief(Func&& brief) -> decltype(brief());
+  template <typename Func>
+  ABSL_ATTRIBUTE_NOINLINE auto AwaitBrief(Func&& brief) -> decltype(brief());
 
   //! Similarly to AsyncBrief but 'f' but wraps 'f' in fiber.
   //! f is allowed to fiber-block or await.
@@ -243,7 +244,7 @@ class Proactor {
   using EventCount = fibers_ext::EventCount;
 
   FuncQ task_queue_;
-  std::atomic_uint32_t tq_seq_{0}, tq_wakeups_{0};
+  std::atomic_uint32_t tq_seq_{0}, tq_wakeup_ev_{0}, tq_full_ev_{0};
   EventCount task_queue_avail_, sqe_avail_;
   ::boost::fibers::context* main_loop_ctx_ = nullptr;
 
@@ -276,7 +277,6 @@ class Proactor {
   static thread_local TLInfo tl_info_;
 };
 
-
 // Implementation
 // **********************************************************************
 //
@@ -284,6 +284,10 @@ template <typename Func> void Proactor::AsyncBrief(Func&& f) {
   if (EmplaceTaskQueue(std::forward<Func>(f)))
     return;
 
+  tq_full_ev_.fetch_add(1, std::memory_order_relaxed);
+
+  // If EventCount::Wait appears on profiler radar, it's most likely because the task queue is
+  // too overloaded. It's either the CPU is overloaded or we are sending too many tasks through it.
   while (true) {
     EventCount::Key key = task_queue_avail_.prepareWait();
 
