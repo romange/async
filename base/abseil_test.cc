@@ -7,6 +7,8 @@
 //    -I.. -I../third_party/libs/benchmark/include/ -I../third_party/libs/gtest/include/
 
 #include <absl/debugging/internal/vdso_support.h>
+#include <absl/debugging/stacktrace.h>
+
 #include <gperftools/profiler.h>
 #include <ucontext.h>
 
@@ -36,12 +38,16 @@ TEST_F(AbseilTest, VDSO) {
 #endif
 }
 
-TEST_F(AbseilTest, Profile) {
+TEST_F(AbseilTest, PerftoolsProfile) {
   void* stack[256];
-  ucontext_t ucntx;
 
-  ASSERT_EQ(0, getcontext(&ucntx));
-  int res = ProfilerGetStackTrace(stack, 255, 1, &ucntx);
+  int res = ProfilerGetStackTrace(stack, 255, 1, NULL);
+  ASSERT_GT(res, 5);
+}
+
+TEST_F(AbseilTest, Stacktrace) {
+  void* stack[256];
+  int res = absl::GetStackTraceWithContext(stack, 255, 1, NULL, NULL);
   ASSERT_GT(res, 5);
 }
 
