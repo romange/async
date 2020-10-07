@@ -218,8 +218,9 @@ add_definitions(-DBOOST_BEAST_SEPARATE_COMPILATION -DBOOST_ASIO_SEPARATE_COMPILA
 # TODO: On aarch64 heap profiler does not work, need to investigate it.
 if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
   set(PERF_TOOLS_LIB "libtcmalloc_and_profiler.a")
+  set(PERF_TOOLS_OPTS --enable-libunwind)
 else()
-  set(PERF_TOOLS_OPTS --disable-heap-checker --disable-debugalloc --disable-heap-profiler)
+  set(PERF_TOOLS_OPTS --disable-libunwind --disable-heap-checker --disable-debugalloc --disable-heap-profiler)
   set(PERF_TOOLS_LIB "libprofiler.a")
 endif()
 
@@ -229,7 +230,7 @@ add_third_party(
   GIT_TAG gperftools-2.8
   PATCH_COMMAND ./autogen.sh
   CONFIGURE_COMMAND <SOURCE_DIR>/configure --enable-frame-pointers --enable-static=yes
-                    --enable-libunwind "CXXFLAGS=${THIRD_PARTY_CXX_FLAGS}"
+                    "CXXFLAGS=${THIRD_PARTY_CXX_FLAGS}"
                     --disable-deprecated-pprof --enable-aggressive-decommit-by-default
                     --prefix=${THIRD_PARTY_LIB_DIR}/gperf ${PERF_TOOLS_OPTS}
   LIB ${PERF_TOOLS_LIB}
