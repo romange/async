@@ -234,9 +234,13 @@ class Proactor {
   uint8_t reserved_f_ : 4;
 
   // We use fu2 function to allow moveable semantics.
-  using Tasklet =
+  using Fu2Fun =
       fu2::function_base<true /*owns*/, false /*non-copyable*/, fu2::capacity_default,
                          false /* non-throwing*/, false /* strong exceptions guarantees*/, void()>;
+  struct Tasklet : public Fu2Fun {
+    using Fu2Fun::Fu2Fun;
+    using Fu2Fun::operator=;
+  };
   static_assert(sizeof(Tasklet) == 32, "");
 
   using FuncQ = base::mpmc_bounded_queue<Tasklet>;

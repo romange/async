@@ -22,7 +22,6 @@ class FiberQueue {
 
  public:
   explicit FiberQueue(unsigned queue_size = 128);
-  FiberQueue();
 
   template <typename F> bool TryAdd(F&& f) {
     if (queue_.try_enqueue(std::forward<F>(f))) {

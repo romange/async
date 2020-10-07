@@ -116,7 +116,9 @@ constexpr uint64_t kIgnoreIndex = 0;
 constexpr uint64_t kWakeIndex = 1;
 
 constexpr uint64_t kUserDataCbIndex = 1024;
-constexpr uint32_t kSpinLimit = 120;  // Important to spin, otherwise we saturate eventfd_write.
+
+// Important to spin a bit, otherwise we put too much pressure on  eventfd_write.
+constexpr uint32_t kSpinLimit = 10;
 
 }  // namespace
 
@@ -270,7 +272,6 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
 
     // Lets spin a bit to make a system a bit more responsive.
     if (++spin_loops < kSpinLimit) {
-      // usleep(spin_loops);
       // We should not spin too much using sched_yield or it burns a fuckload of cpu.
       continue;
     }
@@ -442,10 +443,8 @@ void Proactor::DispatchCompletions(io_uring_cqe* cqes, unsigned count) {
 
     if (cqe.user_data == kWakeIndex) {
       // We were woken up. Need to rearm wake_fd_ poller.
-      DCHECK_GE(cqe.res, 0);
+      DCHECK_EQ(cqe.res, 8);
       DVLOG(2) << "PRO[" << tl_info_.proactor_index << "] Wakeup " << cqe.res << "/" << cqe.flags;
-
-      CHECK_EQ(8, read(wake_fd_, &cqe.user_data, 8));  // Pull the data
 
       // TODO: to move io_uring_get_sqe call from here to before we stall.
       ArmWakeupEvent();
@@ -535,8 +534,15 @@ void Proactor::ArmWakeupEvent() {
   CHECK_NOTNULL(sqe);
 
   io_uring_prep_poll_add(sqe, wake_fixed_fd_, POLLIN);
-  sqe->user_data = kWakeIndex;
+  sqe->user_data = kIgnoreIndex;
   sqe->flags |= (register_fd_ ? IOSQE_FIXED_FILE : 0);
+  sqe->flags |= IOSQE_IO_LINK;
+  sqe = io_uring_get_sqe(&ring_);
+
+  // drain the signal.
+  static uint64_t donot_care;
+  io_uring_prep_read(sqe, wake_fixed_fd_, &donot_care, 8, 0);
+  sqe->user_data = kWakeIndex;
 }
 
 unsigned Proactor::RegisterFd(int source_fd) {
