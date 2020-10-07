@@ -34,6 +34,8 @@ DEFINE_bool(proactor_register_fd, false, "If true tries to register file destric
 #define __NR_io_uring_enter 426
 #endif
 
+#define VPRO(verbosity) VLOG(verbosity) << "PRO[" << tl_info_.proactor_index << "] "
+
 using namespace boost;
 namespace ctx = boost::context;
 
@@ -298,10 +300,10 @@ void Proactor::Run(unsigned ring_depth, int wq_fd) {
     }
   }
 
-  VLOG(1) << "total/stalls/cqe_syscalls/cqe_fetches: " << loop_cnt << "/" << num_stalls << "/"
+  VPRO(1) << "total/stalls/cqe_syscalls/cqe_fetches: " << loop_cnt << "/" << num_stalls << "/"
           << cqe_syscalls << "/" << cqe_fetches;
 
-  VLOG(1) << "tq_wakeups/tq_full/tq_task_int/algo_notifies: " << tq_wakeup_ev_.load() << "/"
+  VPRO(1) << "tq_wakeups/tq_full/tq_task_int/algo_notifies: " << tq_wakeup_ev_.load() << "/"
           << tq_full_ev_.load() << "/" << task_interrupts << "/" << algo_notify_cnt_.load();
 
   VLOG(1) << "centries size: " << centries_.size();
@@ -441,7 +443,7 @@ void Proactor::DispatchCompletions(io_uring_cqe* cqes, unsigned count) {
     if (cqe.user_data == kWakeIndex) {
       // We were woken up. Need to rearm wake_fd_ poller.
       DCHECK_GE(cqe.res, 0);
-      DVLOG(1) << "Wakeup " << cqe.res << "/" << cqe.flags;
+      DVLOG(2) << "PRO[" << tl_info_.proactor_index << "] Wakeup " << cqe.res << "/" << cqe.flags;
 
       CHECK_EQ(8, read(wake_fd_, &cqe.user_data, 8));  // Pull the data
 
