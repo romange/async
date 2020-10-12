@@ -6,7 +6,6 @@
 
 #include <fcntl.h>
 #include <gmock/gmock.h>
-
 #include <netinet/in.h>
 #include <sys/socket.h>
 
@@ -22,9 +21,9 @@
 
 using namespace boost;
 using namespace std;
+using base::VarzValue;
 using testing::ElementsAre;
 using testing::Pair;
-using base::VarzValue;
 
 namespace util {
 namespace uring {
@@ -35,7 +34,10 @@ class ProactorTest : public testing::Test {
  protected:
   void SetUp() override {
     proactor_ = std::make_unique<Proactor>();
-    proactor_thread_ = thread{[this] { proactor_->Run(kRingDepth); }};
+    proactor_thread_ = thread{[this] {
+      proactor_->Init(kRingDepth);
+      proactor_->Run();
+    }};
   }
 
   void TearDown() {
@@ -142,8 +144,8 @@ TEST_F(ProactorTest, SqPoll) {
 
   struct sockaddr_in serv_addr;
   memset(&serv_addr, 0, sizeof(serv_addr));
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(10200);
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_port = htons(10200);
   serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
   int res = bind(srv_fd, (sockaddr*)&serv_addr, sizeof(serv_addr));

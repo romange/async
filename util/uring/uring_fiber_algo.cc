@@ -160,7 +160,7 @@ void UringFiberAlgo::notify() noexcept {
   // ready queue.
   auto prev_val = proactor_->tq_seq_.fetch_or(1, std::memory_order_relaxed);
   if (prev_val == Proactor::WAIT_SECTION_STATE) {
-    Proactor* from = Proactor::me();
+    ProactorBase* from = Proactor::me();
     if (from)
       from->algo_notify_cnt_.fetch_add(1, std::memory_order_relaxed);
     proactor_->WakeRing();

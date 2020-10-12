@@ -42,7 +42,10 @@ void ProactorPool::Run(uint32_t ring_depth) {
 
   auto init_proactor = [this, ring_depth, &buf](int i, int wq_fd) mutable {
     snprintf(buf, sizeof(buf), "Proactor%u", i);
-    auto cb = [ptr = &proactor_[i], wq_fd, ring_depth]() { ptr->Run(ring_depth, wq_fd); };
+    auto cb = [ptr = &proactor_[i], wq_fd, ring_depth]() {
+      ptr->Init(ring_depth, wq_fd);
+      ptr->Run();
+    };
     pthread_t tid = base::StartThread(buf, cb);
     cpu_set_t cps;
     CPU_ZERO(&cps);

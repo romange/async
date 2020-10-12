@@ -122,16 +122,8 @@ constexpr uint32_t kSpinLimit = 10;
 
 }  // namespace
 
-thread_local Proactor::TLInfo Proactor::tl_info_;
 
-Proactor::Proactor() : task_queue_(512) {
-  wake_fd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-  CHECK_GE(wake_fd_, 0);
-  VLOG(1) << "Created wake_fd is " << wake_fd_;
-
-  volatile ctx::fiber dummy;  // For some weird reason I need this to pull
-                              // boost::context into linkage.
-}
+Proactor::Proactor() : ProactorBase() {}
 
 Proactor::~Proactor() {
   idle_map_.clear();
@@ -142,7 +134,6 @@ Proactor::~Proactor() {
   }
   VLOG(1) << "Closing wake_fd " << wake_fd_ << " ring fd: " << ring_.ring_fd;
 
-  close(wake_fd_);
 
   signal_state* ss = get_signal_state();
   for (size_t i = 0; i < ABSL_ARRAYSIZE(ss->signal_map); ++i) {
@@ -158,9 +149,8 @@ void Proactor::Stop() {
   VLOG(1) << "Proactor::StopFinish";
 }
 
-void Proactor::Run(unsigned ring_depth, int wq_fd) {
+void Proactor::Run() {
   VLOG(1) << "Proactor::Run";
-  Init(ring_depth, wq_fd);
 
   main_loop_ctx_ = fibers::context::active();
   fibers::scheduler* sched = main_loop_ctx_->get_scheduler();
