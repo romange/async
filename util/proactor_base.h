@@ -11,6 +11,10 @@
 #include "base/function2.hpp"
 #pragma GCC diagnostic pop
 
+#include <absl/container/flat_hash_map.h>
+
+#include <functional>
+
 #include "base/mpmc_bounded_queue.h"
 #include "util/fibers/fibers_ext.h"
 
@@ -109,6 +113,18 @@ class ProactorBase {
     return fb;
   }
 
+  using IdleTask = std::function<bool()>;
+
+  /**
+   * @brief Adds a task that should run when Proactor loop is idle. The task should return
+   *        true if keep it running or false if it finished its job.
+   *
+   * @tparam Func
+   * @param f
+   * @return uint64_t an unique ids denoting this task. Can be used for cancellation.
+   */
+  uint64_t AddIdleTask(IdleTask f);
+
  protected:
   enum { WAIT_SECTION_STATE = 1UL << 31 };
 
@@ -138,6 +154,10 @@ class ProactorBase {
 
   FuncQ task_queue_;
   EventCount task_queue_avail_;
+
+  uint64_t next_idle_task_{1};
+  absl::flat_hash_map<uint64_t, IdleTask> idle_map_;
+  absl::flat_hash_map<uint64_t, IdleTask>::const_iterator idle_it_;
 
   struct TLInfo {
     uint32_t proactor_index = 0;

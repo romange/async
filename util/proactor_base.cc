@@ -28,4 +28,11 @@ ProactorBase::~ProactorBase() {
   close(wake_fd_);
 }
 
+uint64_t ProactorBase::AddIdleTask(IdleTask f) {
+  uint64_t id = next_idle_task_++;
+  auto res = idle_map_.emplace(id, std::move(f));
+  CHECK(res.second);
+  return id;
+}
+
 }  // namespace util

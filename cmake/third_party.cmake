@@ -225,8 +225,8 @@ add_definitions(-DBOOST_BEAST_SEPARATE_COMPILATION -DBOOST_ASIO_SEPARATE_COMPILA
 
 # TODO: On aarch64 heap profiler does not work, need to investigate it.
 if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
-  set(PERF_TOOLS_LIB "libtcmalloc_and_profiler.a")
-  set(PERF_TOOLS_OPTS --enable-libunwind)
+  set(PERF_TOOLS_LIB "libprofiler.a")
+  set(PERF_TOOLS_OPTS --enable-libunwind --disable-heap-checker --disable-debugalloc)
 else()
   set(PERF_TOOLS_OPTS --disable-libunwind --disable-heap-checker --disable-debugalloc --disable-heap-profiler)
   set(PERF_TOOLS_LIB "libprofiler.a")
@@ -242,6 +242,21 @@ add_third_party(
                     --disable-deprecated-pprof --enable-aggressive-decommit-by-default
                     --prefix=${THIRD_PARTY_LIB_DIR}/gperf ${PERF_TOOLS_OPTS}
   LIB ${PERF_TOOLS_LIB}
+)
+
+set(MIMALLOC_INCLUDE_DIR ${THIRD_PARTY_LIB_DIR}/mimalloc/include)
+add_third_party(mimalloc
+  GIT_REPOSITORY https://github.com/microsoft/mimalloc
+  GIT_TAG v1.6.7
+
+  # Add -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS=-O0 to debug
+  CMAKE_PASS_FLAGS "-DMI_BUILD_SHARED=OFF -DMI_BUILD_TESTS=OFF -DMI_OVERRIDE=ON"
+
+  BUILD_COMMAND make -j4 mimalloc-static
+  INSTALL_COMMAND make install
+  COMMAND mkdir -p ${MIMALLOC_INCLUDE_DIR}
+  COMMAND sh -c "ln -s ${THIRD_PARTY_LIB_DIR}/mimalloc/lib/mimalloc-1.6/include/*.h -t ${MIMALLOC_INCLUDE_DIR}/ || true"
+  COMMAND sh -c "ln -s ${THIRD_PARTY_LIB_DIR}/mimalloc/libmi* ${THIRD_PARTY_LIB_DIR}/mimalloc/lib/libmimalloc.a || true"
 )
 
 add_third_party(pmr

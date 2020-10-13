@@ -572,13 +572,6 @@ void Proactor::UnregisterFd(unsigned fixed_fd) {
   }
 }
 
-uint64_t Proactor::AddIdleTask(IdleTask f) {
-  uint64_t id = next_idle_task_++;
-  auto res = idle_map_.emplace(id, std::move(f));
-  CHECK(res.second);
-  return id;
-}
-
 void Proactor::CheckForTimeoutSupport() {
   io_uring_sqe* sqe = CHECK_NOTNULL(io_uring_get_sqe(&ring_));
   timespec ts = {.tv_sec = 0, .tv_nsec = 10000};

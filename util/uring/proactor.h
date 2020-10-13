@@ -7,13 +7,7 @@
 #include <liburing.h>
 #include <pthread.h>
 
-#include <boost/fiber/fiber.hpp>
-#include <functional>
-
-#include "absl/container/flat_hash_map.h"
-
 #include "util/proactor_base.h"
-#include "util/fibers/fibers_ext.h"
 #include "util/uring/submit_entry.h"
 
 namespace util {
@@ -39,7 +33,6 @@ class Proactor : public ProactorBase {
   void Stop();
 
   using IoResult = int;
-  using IdleTask = std::function<bool()>;
 
   // IoResult is the I/O result of the completion event.
   // int64_t is the payload supplied during event submission. See GetSubmitEntry below.
@@ -143,10 +136,6 @@ class Proactor : public ProactorBase {
   std::vector<int> register_fds_;
   int32_t next_free_ce_ = -1;
   uint32_t next_free_fd_ = 0;
-
-  uint64_t next_idle_task_{1};
-  absl::flat_hash_map<uint64_t, IdleTask> idle_map_;
-  absl::flat_hash_map<uint64_t, IdleTask>::const_iterator idle_it_;
 };
 
 }  // namespace uring
