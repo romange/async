@@ -1,5 +1,5 @@
 
-add_library(proactor_lib proactor_base.cc)
+add_library(proactor_lib proactor_base.cc fiber_sched_algo.cc)
 cxx_link(proactor_lib base Boost::fiber)
 
 add_subdirectory(fibers)

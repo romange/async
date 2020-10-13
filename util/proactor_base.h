@@ -20,16 +20,12 @@
 
 namespace util {
 
-namespace uring {
-
-class UringFiberAlgo;
-// class ProactorPool;
-}  // namespace uring
+class FiberSchedAlgo;
 
 class ProactorBase {
   ProactorBase(const ProactorBase&) = delete;
   void operator=(const ProactorBase&) = delete;
-  friend class uring::UringFiberAlgo;
+  friend class FiberSchedAlgo;
 
  public:
   ProactorBase();

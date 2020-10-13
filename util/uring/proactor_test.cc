@@ -202,7 +202,7 @@ TEST_F(ProactorTest, DispatchTest) {
 
   LOG(INFO) << "LaunchFiber";
   auto fb = proactor_->LaunchFiber([&] {
-    this_fiber::properties<UringFiberProps>().set_name("jessie");
+    this_fiber::properties<FiberProps>().set_name("jessie");
 
     std::unique_lock<fibers::mutex> g(mu);
     state = 1;

@@ -157,7 +157,7 @@ void Proactor::Run() {
 
   UringFiberAlgo* scheduler = new UringFiberAlgo(this);
   sched->set_algo(scheduler);
-  this_fiber::properties<UringFiberProps>().set_name("ioloop");
+  this_fiber::properties<FiberProps>().set_name("ioloop");
 
   is_stopped_ = false;
 

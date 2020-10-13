@@ -138,7 +138,7 @@ void AcceptServer::BreakListeners() {
 
 // Runs in a dedicated fiber for each listener.
 void ListenerInterface::RunAcceptLoop() {
-  auto& fiber_props = this_fiber::properties<UringFiberProps>();
+  auto& fiber_props = this_fiber::properties<FiberProps>();
   fiber_props.set_name("AcceptLoop");
 
   auto ep = listener_.LocalEndpoint();
