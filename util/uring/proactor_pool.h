@@ -13,7 +13,7 @@
 #include "base/arena.h"
 #include "base/type_traits.h"
 #include "base/RWSpinLock.h"
-#include "util/uring/proactor.h"
+#include "util/proactor_base.h"
 
 namespace util {
 namespace uring {
@@ -47,13 +47,13 @@ class ProactorPool {
   void Stop();
 
   //! Get a Proactor to use. Thread-safe.
-  Proactor* GetNextProactor();
+  ProactorBase* GetNextProactor();
 
-  Proactor& operator[](size_t i) {
-    return at(i);
+  ProactorBase& operator[](size_t i) {
+    return *at(i);
   }
 
-  Proactor& at(size_t i) {
+  ProactorBase* at(size_t i) {
     return proactor_[i];
   }
 
@@ -67,14 +67,14 @@ class ProactorPool {
    * IO-fiber. AsyncOnAll runs asynchronously and will exit before  the task
    * finishes. The 'func' must accept Proactor& as its argument.
    */
-  template <typename Func, AcceptArgsCheck<Func, Proactor*> = 0>
+  template <typename Func, AcceptArgsCheck<Func, ProactorBase*> = 0>
   void AsyncOnAll(Func&& func) {
     CheckRunningState();
     for (unsigned i = 0; i < size(); ++i) {
-      Proactor& context = proactor_[i];
+      ProactorBase* p = proactor_[i];
       // func must be copied, it can not be moved, because we dsitribute it into
       // multiple Proactors.
-      context.AsyncBrief([&context, func]() mutable { func(&context); });
+      p->AsyncBrief([p, func]() mutable { func(p); });
     }
   }
 
@@ -85,13 +85,13 @@ class ProactorPool {
    * submitted but before it has finished running. The 'func' must accept
    * unsigned int (io context index) and Proactor& as its arguments.
    */
-  template <typename Func, AcceptArgsCheck<Func, unsigned, Proactor*> = 0>
+  template <typename Func, AcceptArgsCheck<Func, unsigned, ProactorBase*> = 0>
   void AsyncOnAll(Func&& func) {
     CheckRunningState();
     for (unsigned i = 0; i < size(); ++i) {
-      Proactor& context = proactor_[i];
+      ProactorBase* p = proactor_[i];
       // Copy func on purpose, see above.
-      context.AsyncBrief([&context, i, func]() mutable { func(i, &context); });
+      p->AsyncBrief([p, i, func]() mutable { func(i, p); });
     }
   }
 
@@ -99,12 +99,12 @@ class ProactorPool {
    * @brief Runs the funcion in all IO threads asynchronously.
    * Blocks until all the asynchronous calls return.
    *
-   * Func must accept "Proactor&" and it should not block.
+   * Func must accept "ProactorBase&" and it should not block.
    */
-  template <typename Func, AcceptArgsCheck<Func, Proactor*> = 0>
+  template <typename Func, AcceptArgsCheck<Func, ProactorBase*> = 0>
   void AwaitOnAll(Func&& func) {
     fibers_ext::BlockingCounter bc(size());
-    auto cb = [func = std::forward<Func>(func), bc](Proactor* context) mutable {
+    auto cb = [func = std::forward<Func>(func), bc](ProactorBase* context) mutable {
       func(context);
       bc.Dec();
     };
@@ -117,12 +117,12 @@ class ProactorPool {
    * receives both the index and Proactor&. func must not block.
    *
    */
-  template <typename Func, AcceptArgsCheck<Func, unsigned, Proactor*> = 0>
+  template <typename Func, AcceptArgsCheck<Func, unsigned, ProactorBase*> = 0>
   void AwaitOnAll(Func&& func) {
     fibers_ext::BlockingCounter bc(size());
     auto cb = [func = std::forward<Func>(func), bc](unsigned index,
-                                                    Proactor* context) mutable {
-      func(index, context);
+                                                    ProactorBase* p) mutable {
+      func(index, p);
       bc.Dec();
     };
     AsyncOnAll(std::move(cb));
@@ -137,10 +137,10 @@ class ProactorPool {
    *
    * 'func' callback runs inside a wrapping fiber.
    */
-  template <typename Func, AcceptArgsCheck<Func, unsigned, Proactor*> = 0>
+  template <typename Func, AcceptArgsCheck<Func, unsigned, ProactorBase*> = 0>
   void AsyncFiberOnAll(Func&& func) {
     AsyncOnAll(
-        [func = std::forward<Func>(func)](unsigned i, Proactor* context) {
+        [func = std::forward<Func>(func)](unsigned i, ProactorBase* context) {
           ::boost::fibers::fiber(func, i, context).detach();
         });
   }
@@ -153,9 +153,9 @@ class ProactorPool {
    *
    * 'func' callback runs inside a wrapping fiber.
    */
-  template <typename Func, AcceptArgsCheck<Func, Proactor*> = 0>
+  template <typename Func, AcceptArgsCheck<Func, ProactorBase*> = 0>
   void AsyncFiberOnAll(Func&& func) {
-    AsyncOnAll([func = std::forward<Func>(func)](Proactor* context) {
+    AsyncOnAll([func = std::forward<Func>(func)](ProactorBase* context) {
       ::boost::fibers::fiber(func, context).detach();
     });
   }
@@ -168,11 +168,11 @@ class ProactorPool {
    *
    * Waits for all the callbacks to finish.
    */
-  template <typename Func, AcceptArgsCheck<Func, unsigned, Proactor*> = 0>
+  template <typename Func, AcceptArgsCheck<Func, unsigned, ProactorBase*> = 0>
   void AwaitFiberOnAll(Func&& func) {
     fibers_ext::BlockingCounter bc(size());
     auto cb = [func = std::forward<Func>(func), bc](unsigned i,
-                                                    Proactor* context) mutable {
+                                                    ProactorBase* context) mutable {
       func(i, context);
       bc.Dec();
     };
@@ -188,10 +188,10 @@ class ProactorPool {
    *
    * Waits for all the callbacks to finish.
    */
-  template <typename Func, AcceptArgsCheck<Func, Proactor*> = 0>
+  template <typename Func, AcceptArgsCheck<Func, ProactorBase*> = 0>
   void AwaitFiberOnAll(Func&& func) {
     fibers_ext::BlockingCounter bc(size());
-    auto cb = [func = std::forward<Func>(func), bc](Proactor* context) mutable {
+    auto cb = [func = std::forward<Func>(func), bc](ProactorBase* context) mutable {
       func(context);
       bc.Dec();
     };
@@ -199,7 +199,7 @@ class ProactorPool {
     bc.Wait();
   }
 
-  Proactor* GetLocalProactor();
+  ProactorBase* GetLocalProactor();
 
   // Auxillary functions
 
@@ -211,7 +211,7 @@ class ProactorPool {
   void WrapLoop(size_t index, fibers_ext::BlockingCounter* bc);
   void CheckRunningState();
 
-  std::unique_ptr<Proactor[]> proactor_;
+  std::unique_ptr<ProactorBase*[]> proactor_;
 
   /// The next io_context to use for a connection.
   std::atomic_uint_fast32_t next_io_context_{0};

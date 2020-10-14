@@ -4,11 +4,14 @@
 
 #include "util/uring/accept_server.h"
 
+#include <signal.h>
+
 #include <boost/fiber/operations.hpp>
 
 #include "base/logging.h"
 #include "util/uring/fiber_socket.h"
 #include "util/uring/proactor_pool.h"
+#include "util/uring/proactor.h"
 #include "util/uring/uring_fiber_algo.h"
 
 #define VSOCK(verbosity, sock) VLOG(verbosity) << "sock[" << (sock).native_handle() << "] "
@@ -57,7 +60,7 @@ struct ListenerInterface::SafeConnList {
 AcceptServer::AcceptServer(ProactorPool* pool, bool break_on_int)
     : pool_(pool), ref_bc_(0), break_(break_on_int) {
   if (break_on_int) {
-    Proactor* proactor = pool_->GetNextProactor();
+    ProactorBase* proactor = pool_->GetNextProactor();
     proactor->RegisterSignal({SIGINT, SIGTERM}, [this](int signal) {
       LOG(INFO) << "Exiting on signal " << signal;
       BreakListeners();
@@ -119,8 +122,8 @@ unsigned short AcceptServer::AddListener(unsigned short port, ListenerInterface*
   auto ep = fs->LocalEndpoint();
   lii->RegisterPool(pool_);
 
-  Proactor* next = pool_->GetNextProactor();
-  fs->SetProactor(next);
+  ProactorBase* next = pool_->GetNextProactor();
+  fs->SetProactor((Proactor*)next);
   lii->sock_ = std::move(fs);
 
   list_interface_.emplace_back(lii);
@@ -159,7 +162,7 @@ void ListenerInterface::RunAcceptLoop() {
     std::unique_ptr<FiberSocketBase> peer{res.value()};
 
     VLOG(2) << "Accepted " << peer->native_handle() << ": " << peer->LocalEndpoint();
-    Proactor* next = pool_->GetNextProactor();  // Could be for another thread.
+    Proactor* next = (Proactor*)pool_->GetNextProactor();  // Could be for another thread.
 
     ((FiberSocket*)peer.get())->SetProactor(next);
     Connection* conn = NewConnection(next);

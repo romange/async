@@ -16,7 +16,6 @@ namespace uring {
 
 class Proactor;
 class ProactorPool;
-class Connection;
 class ListenerInterface;
 
 class AcceptServer {

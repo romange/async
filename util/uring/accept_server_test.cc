@@ -11,6 +11,7 @@
 #include "base/logging.h"
 #include "util/asio_stream_adapter.h"
 #include "util/uring/proactor_pool.h"
+#include "util/uring/proactor.h"
 
 namespace util {
 namespace uring {
@@ -84,7 +85,7 @@ void AcceptServerTest::SetUp() {
   as_->AddListener(kPort, new TestListener);
   as_->Run();
 
-  client_sock_.SetProactor(pp_->GetNextProactor());
+  client_sock_.SetProactor((Proactor*)pp_->GetNextProactor());
   auto address = asio::ip::make_address("127.0.0.1");
   asio::ip::tcp::endpoint ep{address, kPort};
 

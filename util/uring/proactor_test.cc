@@ -190,7 +190,7 @@ TEST_F(ProactorTest, Pool) {
   ProactorPool pool{2};
   pool.Run();
 
-  pool.AwaitFiberOnAll([&](Proactor*) { val += 1; });
+  pool.AwaitFiberOnAll([&](auto*) { val += 1; });
   EXPECT_EQ(2, val);
   pool.Stop();
 }

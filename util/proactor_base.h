@@ -1,6 +1,7 @@
 // Copyright 2020, Beeri 15.  All rights reserved.
 // Author: Roman Gershman (romange@gmail.com)
 //
+#pragma once
 
 #include <pthread.h>
 
@@ -34,6 +35,9 @@ class ProactorBase {
   // Runs the poll-loop. Stalls the calling thread which will become the "Proactor" thread.
   virtual void Run() = 0;
 
+  //! Signals proactor to stop. Does not wait for it.
+  void Stop();
+
   /**
    * @brief Returns true if the called is running in this Proactor thread.
    *
@@ -55,6 +59,13 @@ class ProactorBase {
   static ProactorBase* me() {
     return tl_info_.owner;
   }
+
+  void RegisterSignal(std::initializer_list<uint16_t> l, std::function<void(int)> cb);
+
+  void ClearSignal(std::initializer_list<uint16_t> l) {
+    RegisterSignal(l, nullptr);
+  }
+
 
   // Returns an approximate (cached) time with nano-sec granularity.
   // The caller must run in the same thread as the proactor.
@@ -131,6 +142,8 @@ class ProactorBase {
 
   pthread_t thread_id_ = 0U;
   int wake_fd_;
+  bool is_stopped_ = true;
+
   std::atomic_uint32_t tq_seq_{0}, tq_full_ev_{0};
   std::atomic_uint32_t algo_notify_cnt_{0} /* how many times this FiberAlgo woke up others */;
 

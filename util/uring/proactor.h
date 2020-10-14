@@ -29,9 +29,6 @@ class Proactor : public ProactorBase {
   // Runs the poll-loop. Stalls the calling thread which will become the "Proactor" thread.
   void Run() final;
 
-  //! Signals proactor to stop. Does not wait for it.
-  void Stop();
-
   using IoResult = int;
 
   // IoResult is the I/O result of the completion event.
@@ -70,12 +67,6 @@ class Proactor : public ProactorBase {
     return register_fd_;
   }
 
-  void RegisterSignal(std::initializer_list<uint16_t> l, std::function<void(int)> cb);
-
-  void ClearSignal(std::initializer_list<uint16_t> l) {
-    RegisterSignal(l, nullptr);
-  }
-
   int ring_fd() const {
     return ring_.ring_fd;
   }
@@ -109,7 +100,7 @@ class Proactor : public ProactorBase {
   io_uring ring_;
 
   int  wake_fixed_fd_;
-  bool is_stopped_ = true;
+
   uint8_t fast_poll_f_ : 1;
   uint8_t sqpoll_f_ : 1;
   uint8_t register_fd_ : 1;

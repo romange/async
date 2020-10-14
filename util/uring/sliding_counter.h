@@ -98,7 +98,7 @@ template <unsigned NUM> class SlidingCounter : protected detail::SlidingCounterB
     CheckInit();
 
     std::atomic_uint32_t res{0};
-    pp_->AwaitOnAll([&](unsigned i, Proactor*) {
+    pp_->AwaitOnAll([&](unsigned i, auto*) {
       res.fetch_add(sc_thread_map_[i].Sum(), std::memory_order_relaxed);
     });
 
@@ -109,7 +109,7 @@ template <unsigned NUM> class SlidingCounter : protected detail::SlidingCounterB
     CheckInit();
 
     std::atomic_uint32_t res{0};
-    pp_->AwaitOnAll([&](unsigned i, Proactor*) {
+    pp_->AwaitOnAll([&](unsigned i, auto*) {
       res.fetch_add(sc_thread_map_[i].SumTail(), std::memory_order_relaxed);
     });
 

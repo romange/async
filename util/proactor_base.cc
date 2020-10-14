@@ -4,15 +4,50 @@
 
 #include "util/proactor_base.h"
 
+#include <absl/base/attributes.h>
 #include <sys/eventfd.h>
+#include <signal.h>
+
 #include "base/logging.h"
 
 using namespace boost;
 namespace ctx = boost::context;
 
-
 namespace util {
 
+namespace {
+
+struct signal_state {
+  struct Item {
+    ProactorBase* proactor = nullptr;
+    std::function<void(int)> cb;
+  };
+
+  Item signal_map[_NSIG];
+};
+
+signal_state* get_signal_state() {
+  static signal_state state;
+
+  return &state;
+}
+
+void SigAction(int signal, siginfo_t*, void*) {
+  SIGINT;
+  signal_state* state = get_signal_state();
+  DCHECK_LT(signal, _NSIG);
+
+  auto& item = state->signal_map[signal];
+  auto cb = [signal, &item] { item.cb(signal); };
+
+  if (item.proactor && item.cb) {
+    item.proactor->AsyncFiber(std::move(cb));
+  } else {
+    LOG(ERROR) << "Tangling signal handler " << signal;
+  }
+}
+
+}  // namespace
 thread_local ProactorBase::TLInfo ProactorBase::tl_info_;
 
 ProactorBase::ProactorBase() : task_queue_(512) {
@@ -26,6 +61,19 @@ ProactorBase::ProactorBase() : task_queue_(512) {
 
 ProactorBase::~ProactorBase() {
   close(wake_fd_);
+
+  signal_state* ss = get_signal_state();
+  for (size_t i = 0; i < ABSL_ARRAYSIZE(ss->signal_map); ++i) {
+    if (ss->signal_map[i].proactor == this) {
+      ss->signal_map[i].proactor = nullptr;
+      ss->signal_map[i].cb = nullptr;
+    }
+  }
+}
+
+void ProactorBase::Stop() {
+  AsyncBrief([this] { is_stopped_ = true; });
+  VLOG(1) << "Proactor::StopFinish";
 }
 
 uint64_t ProactorBase::AddIdleTask(IdleTask f) {
@@ -33,6 +81,37 @@ uint64_t ProactorBase::AddIdleTask(IdleTask f) {
   auto res = idle_map_.emplace(id, std::move(f));
   CHECK(res.second);
   return id;
+}
+
+
+void ProactorBase::RegisterSignal(std::initializer_list<uint16_t> l, std::function<void(int)> cb) {
+  auto* state = get_signal_state();
+
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+
+  if (cb) {
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_sigaction = &SigAction;
+
+    for (uint16_t val : l) {
+      CHECK(!state->signal_map[val].cb) << "Signal " << val << " was already registered";
+      state->signal_map[val].cb = cb;
+      state->signal_map[val].proactor = this;
+
+      CHECK_EQ(0, sigaction(val, &sa, NULL));
+    }
+  } else {
+    sa.sa_handler = SIG_DFL;
+
+    for (uint16_t val : l) {
+      CHECK(state->signal_map[val].cb) << "Signal " << val << " was already registered";
+      state->signal_map[val].cb = nullptr;
+      state->signal_map[val].proactor = nullptr;
+
+      CHECK_EQ(0, sigaction(val, &sa, NULL));
+    }
+  }
 }
 
 }  // namespace util

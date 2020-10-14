@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "base/pthread_utils.h"
+#include "util/uring/proactor.h"
 
 DEFINE_uint32(proactor_threads, 0, "Number of io threads in the pool");
 
@@ -24,11 +25,15 @@ ProactorPool::ProactorPool(std::size_t pool_size) {
                                            : thread::hardware_concurrency();
   }
   pool_size_ = pool_size;
-  proactor_.reset(new Proactor[pool_size]);
+  proactor_.reset(new ProactorBase*[pool_size]);
+  std::fill(proactor_.get(), proactor_.get() + pool_size, nullptr);
 }
 
 ProactorPool::~ProactorPool() {
   Stop();
+  for (size_t i = 0; i < pool_size_; ++i) {
+    delete proactor_[i];
+  }
 }
 
 void ProactorPool::CheckRunningState() {
@@ -42,9 +47,11 @@ void ProactorPool::Run(uint32_t ring_depth) {
 
   auto init_proactor = [this, ring_depth, &buf](int i, int wq_fd) mutable {
     snprintf(buf, sizeof(buf), "Proactor%u", i);
-    auto cb = [ptr = &proactor_[i], wq_fd, ring_depth]() {
-      ptr->Init(ring_depth, wq_fd);
-      ptr->Run();
+    Proactor* p = new Proactor;
+    proactor_[i] = p;
+    auto cb = [p, wq_fd, ring_depth]() mutable {
+      p->Init(ring_depth, wq_fd);
+      p->Run();
     };
     pthread_t tid = base::StartThread(buf, cb);
     cpu_set_t cps;
@@ -56,14 +63,14 @@ void ProactorPool::Run(uint32_t ring_depth) {
                         << strerror(rc) << "\n";
   };
   init_proactor(0, -1);
-  int wq_fd = FLAGS_proactor_reuse_wq ? proactor_[0].ring_fd() : -1;
+  int wq_fd = FLAGS_proactor_reuse_wq ? ((Proactor*)proactor_[0])->ring_fd() : -1;
 
   for (size_t i = 1; i < pool_size_; ++i) {
     init_proactor(i, wq_fd);
   }
   state_ = RUN;
 
-  AwaitOnAll([](unsigned index, Proactor*) {
+  AwaitOnAll([](unsigned index, auto*) {
     // It seems to simplify things in kernel for io_uring.
     // https://github.com/axboe/liburing/issues/218
     // I am not sure what's how it impacts higher application levels.
@@ -79,31 +86,31 @@ void ProactorPool::Stop() {
     return;
 
   for (size_t i = 0; i < pool_size_; ++i) {
-    proactor_[i].Stop();
+    proactor_[i]->Stop();
   }
 
   VLOG(1) << "Proactors have been stopped";
 
   for (size_t i = 0; i < pool_size_; ++i) {
-    pthread_join(proactor_[i].thread_id(), nullptr);
+    pthread_join(proactor_[i]->thread_id(), nullptr);
     VLOG(2) << "Thread " << i << " has joined";
   }
   state_ = STOPPED;
 }
 
-Proactor* ProactorPool::GetNextProactor() {
+ProactorBase* ProactorPool::GetNextProactor() {
   uint32_t index = next_io_context_.load(std::memory_order_relaxed);
   // Use a round-robin scheme to choose the next io_context to use.
   DCHECK_LT(index, pool_size_);
 
-  Proactor& proactor = at(index++);
+  ProactorBase* proactor = at(index++);
 
   // Not-perfect round-robind since this function is non-transactional but it "works".
   if (index >= pool_size_)
     index = 0;
 
   next_io_context_.store(index, std::memory_order_relaxed);
-  return &proactor;
+return proactor;
 }
 
 absl::string_view ProactorPool::GetString(absl::string_view source) {

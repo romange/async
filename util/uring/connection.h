@@ -5,13 +5,14 @@
 
 #include <boost/intrusive/slist.hpp>
 #include <functional>
-#include "util/uring/fiber_socket.h"
+
+#include "util/fiber_socket_base.h"
 
 namespace util {
-namespace uring {
 
-class Proactor;
+namespace uring {
 class ListenerInterface;
+} //
 
 class Connection {
   using connection_hook_t = ::boost::intrusive::slist_member_hook<
@@ -35,8 +36,7 @@ class Connection {
   virtual void HandleRequests() = 0;
 
   std::unique_ptr<FiberSocketBase> socket_;
-  friend class ListenerInterface;
+  friend class uring::ListenerInterface;
 };
 
-}  // namespace uring
 }  // namespace util
