@@ -8,7 +8,7 @@
 #include <sys/timerfd.h>
 
 #include "base/logging.h"
-#include "util/uring/proactor.h"
+#include "util/proactor_base.h"
 
 // TODO: We should replace DVLOG macros with RAW_VLOG if we do glog sync integration.
 

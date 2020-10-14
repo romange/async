@@ -61,7 +61,7 @@ class FiberSocketBase : public SyncStreamInterface {
   }
 
   native_handle_type native_handle() const {
-    return fd_ & FD_MASK;
+    return fd_ < 0 ? fd_ : fd_ & FD_MASK;
   }
 
   //! Removes the ownership over file descriptor. Use with caution.
