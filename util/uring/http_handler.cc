@@ -107,12 +107,12 @@ HttpHandler2::HttpHandler2(const HttpListenerBase* base) : base_(base) {
 }
 
 void HttpHandler2::HandleRequests() {
-  CHECK(socket_.IsOpen());
+  CHECK(socket_->IsOpen());
   beast::flat_buffer buffer;
   RequestType request;
 
   system::error_code ec;
-  AsioStreamAdapter<> asa(socket_);
+  AsioStreamAdapter<> asa(*socket_);
 
   while (true) {
     h2::read(asa, buffer, request, ec);

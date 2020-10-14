@@ -95,7 +95,7 @@ class ListenerInterface {
     return pool_;
   }
 
-  FiberSocket* listener() { return &listener_;}
+  FiberSocket* socket() { return sock_.get();}
 
  private:
   struct SafeConnList;
@@ -103,7 +103,7 @@ class ListenerInterface {
   void RunAcceptLoop();
   static void RunSingleConnection(Connection* conn, SafeConnList* list);
 
-  FiberSocket listener_;
+  std::unique_ptr<FiberSocket> sock_;
 
   ProactorPool* pool_ = nullptr;
   friend class AcceptServer;

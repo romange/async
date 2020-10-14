@@ -29,7 +29,7 @@ void TestConnection::HandleRequests() {
   char buf[128];
   system::error_code ec;
 
-  AsioStreamAdapter<FiberSocket> asa(socket_);
+  AsioStreamAdapter<FiberSocketBase> asa(*socket_);
 
   while (true) {
     asa.read_some(asio::buffer(buf), ec);

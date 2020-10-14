@@ -74,7 +74,7 @@ void AcceptServer::Run() {
     ref_bc_.Add(list_interface_.size());
 
     for (auto& lw : list_interface_) {
-      auto* proactor = lw->listener_.proactor();
+      ProactorBase* proactor = lw->sock_->proactor();
       proactor->AsyncFiber([li = lw.get(), this] {
         li->RunAcceptLoop();
         ref_bc_.Dec();
@@ -106,22 +106,22 @@ void AcceptServer::Wait() {
 
 // Returns the port number to which the listener was bound.
 unsigned short AcceptServer::AddListener(unsigned short port, ListenerInterface* lii) {
-  CHECK(lii && !lii->listener_.IsOpen());
+  CHECK(lii && !lii->sock_);
 
   // We can not allow dynamic listener additions because listeners_ might reallocate.
   CHECK(!was_run_);
 
-  FiberSocket fs;
+  std::unique_ptr<FiberSocket> fs{new FiberSocket};
   uint32_t sock_opt_mask = lii->GetSockOptMask();
-  auto ec = fs.Listen(port, backlog_, sock_opt_mask);
+  auto ec = fs->Listen(port, backlog_, sock_opt_mask);
   CHECK(!ec) << "Could not open port " << port << " " << ec << "/" << ec.message();
 
-  auto ep = fs.LocalEndpoint();
+  auto ep = fs->LocalEndpoint();
   lii->RegisterPool(pool_);
 
   Proactor* next = pool_->GetNextProactor();
-  fs.SetProactor(next);
-  lii->listener_ = std::move(fs);
+  fs->SetProactor(next);
+  lii->sock_ = std::move(fs);
 
   list_interface_.emplace_back(lii);
 
@@ -130,8 +130,8 @@ unsigned short AcceptServer::AddListener(unsigned short port, ListenerInterface*
 
 void AcceptServer::BreakListeners() {
   for (auto& lw : list_interface_) {
-    auto* proactor = lw->listener_.proactor();
-    proactor->AsyncBrief([sock = &lw->listener_] { sock->Shutdown(SHUT_RDWR); });
+    ProactorBase* proactor = lw->sock_->proactor();
+    proactor->AsyncBrief([sock = lw->sock_.get()] { sock->Shutdown(SHUT_RDWR); });
   }
   VLOG(1) << "AcceptServer::BreakListeners finished";
 }
@@ -141,28 +141,29 @@ void ListenerInterface::RunAcceptLoop() {
   auto& fiber_props = this_fiber::properties<FiberProps>();
   fiber_props.set_name("AcceptLoop");
 
-  auto ep = listener_.LocalEndpoint();
-  VSOCK(0, listener_) << "AcceptServer - listening on port " << ep.port();
+  auto ep = sock_->LocalEndpoint();
+  VSOCK(0, *sock_) << "AcceptServer - listening on port " << ep.port();
   SafeConnList safe_list;
 
-  PreAcceptLoop(listener_.proactor());
+  PreAcceptLoop(sock_->proactor());
 
   while (true) {
-    FiberSocket peer;
-    std::error_code ec = listener_.Accept(&peer);
-    if (ec == errc::connection_aborted)
-      break;
-
-    if (ec) {
-      LOG(ERROR) << "Error calling accept " << ec << "/" << ec.message();
+    FiberSocket::accept_result res = sock_->Accept();
+    if (!res.has_value()) {
+      FiberSocket::error_code ec = res.error();
+      if (ec != errc::connection_aborted) {
+        LOG(ERROR) << "Error calling accept " << ec << "/" << ec.message();
+      }
       break;
     }
-    VLOG(2) << "Accepted " << peer.native_handle() << ": " << peer.LocalEndpoint();
+    std::unique_ptr<FiberSocketBase> peer{res.value()};
+
+    VLOG(2) << "Accepted " << peer->native_handle() << ": " << peer->LocalEndpoint();
     Proactor* next = pool_->GetNextProactor();  // Could be for another thread.
 
-    peer.SetProactor(next);
+    ((FiberSocket*)peer.get())->SetProactor(next);
     Connection* conn = NewConnection(next);
-    conn->SetSocket(std::move(peer));
+    conn->SetSocket(peer.release());
     safe_list.Link(conn);
 
     // mutable because we move peer.
@@ -179,8 +180,8 @@ void ListenerInterface::RunAcceptLoop() {
   safe_list.mu.lock();
   unsigned cnt = 0;
   for (auto& val : safe_list.list) {
-    val.socket_.Shutdown(SHUT_RDWR);
-    DVSOCK(1, val.socket_) << "Shutdown";
+    val.socket_->Shutdown(SHUT_RDWR);
+    DVSOCK(1, *val.socket_) << "Shutdown";
     ++cnt;
   }
 
