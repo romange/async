@@ -13,15 +13,13 @@
 
 namespace util {
 class ListenerInterface;
+class ProactorPool;
 
 namespace uring {
 
-class Proactor;
-class UringPool;
-
 class AcceptServer {
  public:
-  explicit AcceptServer(UringPool* pool, bool break_on_int = true);
+  explicit AcceptServer(ProactorPool* pool, bool break_on_int = true);
   ~AcceptServer();
 
   void Run();
@@ -47,7 +45,7 @@ class AcceptServer {
 
   void BreakListeners();
 
-  UringPool* pool_;
+  ProactorPool* pool_;
 
   // Called if a termination signal has been caught (SIGTERM/SIGINT).
   std::function<void()> on_break_hook_;
