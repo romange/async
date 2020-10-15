@@ -40,8 +40,13 @@ void FiberSchedAlgo::awakened(FiberContext* ctx, FiberProps& props) noexcept {
     uint64_t now = absl::GetCurrentTimeNanos();
     props.awaken_ts_ = now;
     if (ctx != main_cntx_ && (mask_ & MAIN_LOOP_SUSPEND) && !main_cntx_->ready_is_linked()) {
-      if (now - suspend_main_ts_ > 1000000) { // 1ms
+      uint64_t delta = (now - suspend_main_ts_) / 1000;
+      if (delta > 1000) { // 1ms
+        DVLOG(2) << "Preemptively awakened io_loop after " << delta << " usec";
+        ++ready_cnt_;
         main_cntx_->ready_link(rqueue_);
+        FiberProps* main_props = static_cast<FiberProps*>(main_cntx_->get_properties());
+        main_props->awaken_ts_ = now;
       }
     }
   }

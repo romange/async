@@ -9,7 +9,7 @@
 #include "base/varz_node.h"
 #include "util/sliding_counter.h"
 
-#define DEFINE_VARZ(type, name) ::util::uring::type name(#name)
+#define DEFINE_VARZ(type, name) ::util::type name(#name)
 
 namespace util {
 
