@@ -10,9 +10,9 @@
 #include "base/gtest.h"
 #include "base/logging.h"
 #include "util/asio_stream_adapter.h"
-#include "util/uring/uring_pool.h"
-#include "util/uring/proactor.h"
 #include "util/listener_interface.h"
+#include "util/uring/fiber_socket.h"
+#include "util/uring/uring_pool.h"
 
 namespace util {
 namespace uring {

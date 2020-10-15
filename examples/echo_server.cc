@@ -17,10 +17,10 @@
 #include "util/asio_stream_adapter.h"
 #include "util/accept_server.h"
 #include "util/uring/fiber_socket.h"
-#include "util/uring/http_handler.h"
+#include "util/http_handler.h"
 #include "util/uring/uring_pool.h"
 #include "util/uring/uring_fiber_algo.h"
-#include "util/uring/varz.h"
+#include "util/varz.h"
 
 using namespace boost;
 using namespace std;
@@ -40,7 +40,7 @@ DEFINE_uint32(c, 10, "Number of connections per thread");
 DEFINE_uint32(size, 0, "Message size, 0 for hardcoded 4 byte pings");
 DEFINE_string(connect, "", "hostname or ip address to connect to in client mode");
 
-uring::VarzQps ping_qps("ping-qps");
+VarzQps ping_qps("ping-qps");
 
 class EchoConnection : public Connection {
  public:
@@ -182,7 +182,7 @@ void RunServer(ProactorPool* pp) {
   AcceptServer uring_acceptor(pp);
   uring_acceptor.AddListener(FLAGS_port, new EchoListener);
   if (FLAGS_http_port >= 0) {
-    uint16_t port = uring_acceptor.AddListener(FLAGS_http_port, new uring::HttpListener<>);
+    uint16_t port = uring_acceptor.AddListener(FLAGS_http_port, new HttpListener<>);
     LOG(INFO) << "Started http server on port " << port;
   }
 

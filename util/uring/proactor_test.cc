@@ -15,9 +15,9 @@
 #include "util/fibers/fibers_ext.h"
 #include "util/accept_server.h"
 #include "util/uring/uring_pool.h"
-#include "util/uring/sliding_counter.h"
+#include "util/sliding_counter.h"
 #include "util/uring/uring_fiber_algo.h"
-#include "util/uring/varz.h"
+#include "util/varz.h"
 
 using namespace boost;
 using namespace std;

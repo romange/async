@@ -1,7 +1,7 @@
 // Copyright 2020, Beeri 15.  All rights reserved.
 // Author: Roman Gershman (romange@gmail.com)
 //
-#include "util/uring/http_handler.h"
+#include "util/http_handler.h"
 
 #include <boost/beast/core.hpp>  // for flat_buffer.
 #include <boost/beast/http.hpp>
@@ -13,8 +13,6 @@ using namespace http;
 using namespace std;
 using namespace boost;
 namespace h2 = beast::http;
-
-namespace uring {
 
 namespace {
 
@@ -146,5 +144,4 @@ void HttpHandler2::HandleOne(const RequestType& req, HttpContext* cntx) {
   it->second.cb(args, cntx);
 }
 
-}  // namespace uring
 }  // namespace util

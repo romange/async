@@ -1,7 +1,7 @@
 // Copyright 2020, Beeri 15.  All rights reserved.
 // Author: Roman Gershman (romange@gmail.com)
 //
-#include "util/uring/sliding_counter.h"
+#include "util/sliding_counter.h"
 
 #include "absl/time/clock.h"
 #include "base/logging.h"
@@ -9,7 +9,6 @@
 using namespace std;
 
 namespace util {
-namespace uring {
 namespace detail {
 
 uint32_t SlidingCounterTLBase::MoveTsIfNeeded(size_t size, int32_t* dest) const {
@@ -47,5 +46,4 @@ unsigned SlidingCounterBase::ProactorThreadIndex() const {
 }
 
 }  // namespace detail
-}  // namespace uring
 }  // namespace util

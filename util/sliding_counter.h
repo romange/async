@@ -12,7 +12,6 @@
 #include "util/proactor_pool.h"
 
 namespace util {
-namespace uring {
 
 namespace detail {
 
@@ -134,5 +133,4 @@ template <unsigned NUM> auto SlidingCounterTL<NUM>::SumTail() const -> T {
   return sum;
 }
 
-}  // namespace uring
 }  // namespace util

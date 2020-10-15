@@ -7,12 +7,11 @@
 #include "absl/strings/string_view.h"
 #include "base/arena.h"
 #include "base/varz_node.h"
-#include "util/uring/sliding_counter.h"
+#include "util/sliding_counter.h"
 
 #define DEFINE_VARZ(type, name) ::util::uring::type name(#name)
 
 namespace util {
-namespace uring {
 
 class VarzQps : public base::VarzListNode {
  public:
@@ -86,5 +85,4 @@ class VarzFunction : public base::VarzListNode {
   MapCb cb_;
 };
 
-}  // namespace uring
 }  // namespace util

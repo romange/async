@@ -2,22 +2,21 @@
 // Author: Roman Gershman (romange@gmail.com)
 //
 
-#include "util/uring/varz.h"
+#include "util/varz.h"
 
 using namespace boost;
 
 using base::VarzValue;
 
 namespace util {
-namespace uring {
 
 VarzValue VarzQps::GetData() const {
-
-  uint32_t qps =  val_.SumTail() / (Counter::WIN_SIZE - 1); // Average over kWinSize values.
+  uint32_t qps = val_.SumTail() / (Counter::WIN_SIZE - 1);  // Average over kWinSize values.
   return VarzValue::FromInt(qps);
 }
 
-VarzMapAverage::~VarzMapAverage() {}
+VarzMapAverage::~VarzMapAverage() {
+}
 
 void VarzMapAverage::Init(ProactorPool* pp) {
   CHECK(pp_ == nullptr);
@@ -79,5 +78,4 @@ VarzValue VarzFunction::GetData() const {
   return AnyValue(result);
 }
 
-}
 }  // namespace util

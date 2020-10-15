@@ -8,8 +8,7 @@
 #include <vector>
 
 #include "util/fibers/fibers_ext.h"
-#include "util/uring/connection.h"
-#include "util/uring/fiber_socket.h"
+#include "util/connection.h"
 
 namespace util {
 class ListenerInterface;

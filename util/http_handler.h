@@ -15,7 +15,6 @@
 #include "util/listener_interface.h"
 
 namespace util {
-namespace uring {
 
 class HttpContext {
   template <typename Body> using Response = ::boost::beast::http::response<Body>;
@@ -104,5 +103,4 @@ template <typename Handler = HttpHandler2> class HttpListener : public HttpListe
   }
 };
 
-}  // namespace uring
 }  // namespace util
