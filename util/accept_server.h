@@ -14,9 +14,6 @@
 namespace util {
 class ListenerInterface;
 class ProactorPool;
-
-namespace uring {
-
 class AcceptServer {
  public:
   explicit AcceptServer(ProactorPool* pool, bool break_on_int = true);
@@ -59,5 +56,4 @@ class AcceptServer {
   uint16_t backlog_ = 128;
 };
 
-}  // namespace uring
 }  // namespace util

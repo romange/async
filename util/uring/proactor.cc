@@ -16,6 +16,7 @@
 #include "absl/time/clock.h"
 #include "base/logging.h"
 #include "base/proc_util.h"
+#include "util/uring/fiber_socket.h"
 #include "util/uring/uring_fiber_algo.h"
 
 DEFINE_bool(proactor_register_fd, false, "If true tries to register file destricptors");
@@ -256,6 +257,11 @@ void Proactor::Run() {
 
   VLOG(1) << "centries size: " << centries_.size();
   centries_.clear();
+}
+
+
+FiberSocketBase* Proactor::CreateSocket() {
+  return new FiberSocket{this};
 }
 
 void Proactor::Init(size_t ring_size, int wq_fd) {

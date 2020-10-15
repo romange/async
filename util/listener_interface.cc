@@ -11,7 +11,7 @@
 #include "base/logging.h"
 #include "util/fiber_sched_algo.h"
 #include "util/proactor_pool.h"
-#include "util/uring/accept_server.h"
+#include "util/accept_server.h"
 
 #define VSOCK(verbosity, sock) VLOG(verbosity) << "sock[" << (sock).native_handle() << "] "
 #define DVSOCK(verbosity, sock) DVLOG(verbosity) << "sock[" << (sock).native_handle() << "] "

@@ -77,16 +77,7 @@ class Proactor : public ProactorBase {
   }
 
   void UnregisterFd(unsigned fixed_fd);
-
-  /**
-   * @brief Adds a task that should run when Proactor loop is idle. The task should return
-   *        true if keep it running or false if it finished its job.
-   *
-   * @tparam Func
-   * @param f
-   * @return uint64_t an unique ids denoting this task. Can be used for cancellation.
-   */
-  uint64_t AddIdleTask(IdleTask f);
+  FiberSocketBase* CreateSocket() final;
 
  private:
   void WakeRing() final;

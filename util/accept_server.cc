@@ -2,7 +2,7 @@
 // Author: Roman Gershman (romange@gmail.com)
 //
 
-#include "util/uring/accept_server.h"
+#include "util/accept_server.h"
 
 #include <signal.h>
 
@@ -18,8 +18,6 @@ namespace util {
 
 using namespace boost;
 using namespace std;
-
-namespace uring {
 
 AcceptServer::AcceptServer(ProactorPool* pool, bool break_on_int)
     : pool_(pool), ref_bc_(0), break_(break_on_int) {
@@ -78,7 +76,10 @@ unsigned short AcceptServer::AddListener(unsigned short port, ListenerInterface*
   // We can not allow dynamic listener additions because listeners_ might reallocate.
   CHECK(!was_run_);
 
-  std::unique_ptr<FiberSocket> fs{new FiberSocket};
+  ProactorBase* next = pool_->GetNextProactor();
+
+  // TODO: to think about FiberSocket creation.
+  std::unique_ptr<FiberSocketBase> fs{next->CreateSocket()};
   uint32_t sock_opt_mask = lii->GetSockOptMask();
   auto ec = fs->Listen(port, backlog_, sock_opt_mask);
   CHECK(!ec) << "Could not open port " << port << " " << ec << "/" << ec.message();
@@ -86,8 +87,6 @@ unsigned short AcceptServer::AddListener(unsigned short port, ListenerInterface*
   auto ep = fs->LocalEndpoint();
   lii->RegisterPool(pool_);
 
-  ProactorBase* next = pool_->GetNextProactor();
-  fs->SetProactor(next);
   lii->sock_ = std::move(fs);
 
   list_interface_.emplace_back(lii);
@@ -103,5 +102,4 @@ void AcceptServer::BreakListeners() {
   VLOG(1) << "AcceptServer::BreakListeners finished";
 }
 
-}  // namespace uring
 }  // namespace util

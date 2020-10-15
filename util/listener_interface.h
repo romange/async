@@ -14,10 +14,7 @@ namespace util {
 class ProactorPool;
 class Connection;
 class ProactorBase;
-
-namespace uring {
 class AcceptServer;
-}  // namespace uring
 
 /**
  * @brief Abstracts away connections implementation and their life-cycle.
@@ -69,7 +66,7 @@ class ListenerInterface {
   std::unique_ptr<FiberSocketBase> sock_;
 
   ProactorPool* pool_ = nullptr;
-  friend class uring::AcceptServer;
+  friend class AcceptServer;
 };
 
 }  // namespace util
