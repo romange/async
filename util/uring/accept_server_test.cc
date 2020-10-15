@@ -10,8 +10,9 @@
 #include "base/gtest.h"
 #include "base/logging.h"
 #include "util/asio_stream_adapter.h"
-#include "util/uring/proactor_pool.h"
+#include "util/uring/uring_pool.h"
 #include "util/uring/proactor.h"
+#include "util/listener_interface.h"
 
 namespace util {
 namespace uring {
@@ -51,7 +52,7 @@ void TestConnection::HandleRequests() {
 
 class TestListener : public ListenerInterface {
  public:
-  virtual Connection* NewConnection(Proactor* context) {
+  virtual Connection* NewConnection(ProactorBase* context) final {
     return new TestConnection;
   }
 };
@@ -78,10 +79,11 @@ class AcceptServerTest : public testing::Test {
 void AcceptServerTest::SetUp() {
   const uint16_t kPort = 1234;
 
-  pp_.reset(new ProactorPool(2));
-  pp_->Run(16);
+  UringPool* up = new UringPool(16, 2);
+  pp_.reset(up);
+  pp_->Run();
 
-  as_.reset(new AcceptServer{pp_.get()});
+  as_.reset(new AcceptServer{up});
   as_->AddListener(kPort, new TestListener);
   as_->Run();
 

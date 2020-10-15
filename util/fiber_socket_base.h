@@ -13,6 +13,8 @@
 
 namespace util {
 
+class ProactorBase;
+
 class FiberSocketBase : public SyncStreamInterface {
   FiberSocketBase(const FiberSocketBase&) = delete;
   void operator=(const FiberSocketBase&) = delete;
@@ -20,7 +22,7 @@ class FiberSocketBase : public SyncStreamInterface {
   FiberSocketBase& operator=(FiberSocketBase&& other) = delete;
 
  protected:
-  explicit FiberSocketBase(int fd) : fd_(fd) {
+  explicit FiberSocketBase(int fd, ProactorBase* pb) : fd_(fd), proactor_(pb) {
   }
 
  public:
@@ -82,12 +84,25 @@ class FiberSocketBase : public SyncStreamInterface {
     return (ec == std::errc::connection_aborted) || (ec == std::errc::connection_reset);
   }
 
+  void SetProactor(ProactorBase* p);
+
+  ProactorBase* proactor() {
+    return proactor_;
+  }
+
  protected:
+  virtual void OnSetProactor() {};
+
   // Gives me 512M descriptors.
   enum { FD_MASK = 0x1fffffff };
   enum { IS_SHUTDOWN = 0x20000000 };
 
   int32_t fd_;
+
+ private:
+  // We must reference proactor in each socket so that we could support write_some/read_some
+  // with predefined interfance and be compliant with SyncWriteStream/SyncReadStream concepts.
+  ProactorBase* proactor_;
 };
 
 }  // namespace util

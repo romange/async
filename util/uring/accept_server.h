@@ -12,15 +12,16 @@
 #include "util/uring/fiber_socket.h"
 
 namespace util {
+class ListenerInterface;
+
 namespace uring {
 
 class Proactor;
-class ProactorPool;
-class ListenerInterface;
+class UringPool;
 
 class AcceptServer {
  public:
-  explicit AcceptServer(ProactorPool* pool, bool break_on_int = true);
+  explicit AcceptServer(UringPool* pool, bool break_on_int = true);
   ~AcceptServer();
 
   void Run();
@@ -46,7 +47,7 @@ class AcceptServer {
 
   void BreakListeners();
 
-  ProactorPool* pool_;
+  UringPool* pool_;
 
   // Called if a termination signal has been caught (SIGTERM/SIGINT).
   std::function<void()> on_break_hook_;
@@ -58,54 +59,6 @@ class AcceptServer {
   bool break_ = false;
 
   uint16_t backlog_ = 128;
-};
-
-
-/**
- * @brief Abstracts away connections implementation and their life-cycle.
- *
- */
-class ListenerInterface {
- public:
-  virtual ~ListenerInterface();
-
-  void RegisterPool(ProactorPool* pool);
-
-  //! Creates a dedicated handler for a new connection.
-  //! Called per new accepted connection
-  virtual Connection* NewConnection(Proactor* context) = 0;
-
-  //! Hook to be notified when listener interface start listening and accepting sockets.
-  //! Called once.
-  virtual void PreAcceptLoop(Proactor* owner) {}
-
-  // Called by AcceptServer when shutting down start and before all connections are closed.
-  virtual void PreShutdown() {
-  }
-
-  // Called by AcceptServer when shutting down finalized and after all connections are closed.
-  virtual void PostShutdown() {
-  }
-
-  virtual uint32_t GetSockOptMask() const { return 1 << SO_REUSEADDR; }
-
- protected:
-  ProactorPool* pool() {
-    return pool_;
-  }
-
-  FiberSocket* socket() { return sock_.get();}
-
- private:
-  struct SafeConnList;
-
-  void RunAcceptLoop();
-  static void RunSingleConnection(Connection* conn, SafeConnList* list);
-
-  std::unique_ptr<FiberSocket> sock_;
-
-  ProactorPool* pool_ = nullptr;
-  friend class AcceptServer;
 };
 
 }  // namespace uring

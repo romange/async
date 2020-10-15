@@ -10,19 +10,14 @@
 
 namespace util {
 
-namespace uring {
 class ListenerInterface;
-} //
 
 class Connection {
   using connection_hook_t = ::boost::intrusive::slist_member_hook<
       ::boost::intrusive::link_mode<::boost::intrusive::normal_link>>;
   connection_hook_t hook_;
 
-
-  void SetSocket(FiberSocketBase* s) { socket_.reset(s); }
-
-  auto native_handle() const { return socket_->native_handle(); }
+  void Shutdown() { socket_->Shutdown(SHUT_RDWR); }
 
  public:
   using member_hook_t =
@@ -30,13 +25,16 @@ class Connection {
 
   virtual ~Connection() {}
 
+  void SetSocket(FiberSocketBase* s) { socket_.reset(s); }
+  auto native_handle() const { return socket_->native_handle(); }
+
  protected:
 
   // The main loop for a connection. Runs in the same proactor thread as of socket_.
   virtual void HandleRequests() = 0;
 
   std::unique_ptr<FiberSocketBase> socket_;
-  friend class uring::ListenerInterface;
+  friend class ListenerInterface;
 };
 
 }  // namespace util

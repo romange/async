@@ -7,17 +7,14 @@
 #include <liburing/io_uring.h>
 
 #include "util/fiber_socket_base.h"
+#include "util/uring/proactor.h"
 
 namespace util {
 namespace uring {
 
-class Proactor;
-
 class FiberSocket : public FiberSocketBase {
-  FiberSocket(int fd, Proactor* p) : FiberSocketBase(fd), proactor_(p) {}
-
  public:
-  FiberSocket(Proactor* p = nullptr) : FiberSocket(-1, p) {
+  FiberSocket(Proactor* p = nullptr) : FiberSocketBase(-1, p) {
   }
 
   virtual ~FiberSocket();
@@ -32,17 +29,10 @@ class FiberSocket : public FiberSocketBase {
 
   expected_size_t RecvMsg(const msghdr& msg, int flags);
 
-  void SetProactor(Proactor* p);
-
-  Proactor* proactor() { return proactor_; }
-
   using FiberSocketBase::IsConnClosed;
 
  private:
-
-  // We must reference proactor in each socket so that we could support write_some/read_some
-  // with predefined interfance and be compliant with SyncWriteStream/SyncReadStream concepts.
-  Proactor* proactor_;
+  Proactor* GetProactor() { return static_cast<Proactor*>(proactor()); }
 };
 
 }  // namespace uring

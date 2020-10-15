@@ -84,7 +84,7 @@ auto FiberSocket::Close() -> error_code {
     DVSOCK(1) << "Closing socket";
 
     int fd = native_handle();
-    proactor_->UnregisterFd(fd_ & FD_MASK);
+    GetProactor()->UnregisterFd(fd_ & FD_MASK);
     posix_err_wrap(::close(fd), &ec);
     fd_ = -1;
   }
@@ -92,17 +92,8 @@ auto FiberSocket::Close() -> error_code {
 }
 
 
-void FiberSocket::SetProactor(Proactor* p) {
-  CHECK(proactor_ == nullptr);
-  proactor_ = p;
-
-  if (fd_ >= 0) {
-    fd_ = p->RegisterFd(fd_ & FD_MASK);
-  }
-}
-
 auto FiberSocket::Accept() -> accept_result {
-  CHECK(proactor_);
+  CHECK(proactor());
 
   sockaddr_in client_addr;
   socklen_t addr_len = sizeof(client_addr);
@@ -114,13 +105,15 @@ auto FiberSocket::Accept() -> accept_result {
     int res =
         accept4(real_fd, (struct sockaddr*)&client_addr, &addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
     if (res >= 0) {
-      return new FiberSocket{res, nullptr};
+      FiberSocket* fs = new FiberSocket{nullptr};
+      fs->fd_ = res;
+      return fs;
     }
 
     DCHECK_EQ(-1, res);
 
     if (errno == EAGAIN) {
-      FiberCall fc(proactor_);
+      FiberCall fc(GetProactor());
       fc->PrepPollAdd(fd_ & FD_MASK, POLLIN);
       IoResult io_res = fc.Get();
 
@@ -138,7 +131,7 @@ auto FiberSocket::Accept() -> accept_result {
 
 auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
   CHECK_EQ(fd_, -1);
-  CHECK(proactor_ && proactor_->InMyThread());
+  CHECK(proactor() && proactor()->InMyThread());
 
   error_code ec;
 
@@ -146,14 +139,15 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
   if (posix_err_wrap(fd_, &ec) < 0)
     return ec;
 
-  if (proactor_->HasSqPoll()) {
+  Proactor* p = GetProactor();
+  if (p->HasSqPoll()) {
     LOG(FATAL) << "Not supported with SQPOLL, TBD";
   }
-  unsigned dense_id = proactor_->RegisterFd(fd_);
+  unsigned dense_id = p->RegisterFd(fd_);
   IoResult io_res;
 
-  if (proactor_->HasFastPoll()) {
-    FiberCall fc(proactor_);
+  if (p->HasFastPoll()) {
+    FiberCall fc(p);
     fc->PrepConnect(dense_id, ep.data(), ep.size());
     io_res = fc.Get();
   } else {
@@ -166,7 +160,7 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
       return error_code{errno, system::system_category()};
     }
 
-    FiberCall fc(proactor_);
+    FiberCall fc(p);
     fc->PrepPollAdd(dense_id, POLLOUT | POLLIN | POLLERR);
     io_res = fc.Get();
   }
@@ -182,7 +176,7 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
 }
 
 auto FiberSocket::Send(const iovec* ptr, size_t len) -> expected_size_t {
-  CHECK(proactor_);
+  CHECK(proactor());
   CHECK_GT(len, 0U);
   CHECK_GE(fd_, 0);
 
@@ -197,9 +191,9 @@ auto FiberSocket::Send(const iovec* ptr, size_t len) -> expected_size_t {
 
   ssize_t res;
   int fd = fd_ & FD_MASK;
-
+  Proactor* p = GetProactor();
   while (true) {
-    FiberCall fc(proactor_);
+    FiberCall fc(p);
     fc->PrepSendMsg(fd, &msg, MSG_NOSIGNAL);
     res = fc.Get();  // Interrupt point
     if (res >= 0) {
@@ -225,13 +219,14 @@ auto FiberSocket::Send(const iovec* ptr, size_t len) -> expected_size_t {
 }
 
 auto FiberSocket::RecvMsg(const msghdr& msg, int flags) -> expected_size_t {
-  CHECK(proactor_);
+  CHECK(proactor());
   CHECK_GE(fd_, 0);
 
   if (fd_ & IS_SHUTDOWN) {
     return nonstd::make_unexpected(std::make_error_code(std::errc::connection_aborted));
   }
   int fd = fd_ & FD_MASK;
+  Proactor* p = GetProactor();
 
   // There is a possible data-race bug since GetSubmitEntry can preempt inside
   // FiberCall, thus introducing a chain with random SQE not from here.
@@ -239,19 +234,19 @@ auto FiberSocket::RecvMsg(const msghdr& msg, int flags) -> expected_size_t {
   // The bug is not really interesting in this context here since we handle the use-case of old
   // kernels without fast-poll, however it's problematic for transactions that require SQE chains.
   // Added TODO to proactor.h
-  if (!proactor_->HasFastPoll()) {
+  if (!p->HasFastPoll()) {
     DVSOCK(1) << "POLLIN";
     auto cb = [this](IoResult res, int32_t, Proactor* mgr) {
       DVSOCK(1) << "POLLING RES " << res;
     };
-    SubmitEntry se = proactor_->GetSubmitEntry(std::move(cb), 0);
+    SubmitEntry se = p->GetSubmitEntry(std::move(cb), 0);
     se.PrepPollAdd(fd, POLLIN);
     se.sqe()->flags |= IOSQE_IO_LINK;
   }
 
   ssize_t res;
   while (true) {
-    FiberCall fc(proactor_);
+    FiberCall fc(p);
     fc->PrepRecvMsg(fd, &msg, flags);
     res = fc.Get();
 

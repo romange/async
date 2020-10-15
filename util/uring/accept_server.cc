@@ -9,8 +9,10 @@
 #include <boost/fiber/operations.hpp>
 
 #include "base/logging.h"
+
+#include "util/listener_interface.h"
 #include "util/uring/fiber_socket.h"
-#include "util/uring/proactor_pool.h"
+#include "util/uring/uring_pool.h"
 #include "util/uring/proactor.h"
 #include "util/uring/uring_fiber_algo.h"
 
@@ -18,46 +20,13 @@
 #define DVSOCK(verbosity, sock) DVLOG(verbosity) << "sock[" << (sock).native_handle() << "] "
 
 namespace util {
-namespace uring {
 
 using namespace boost;
 using namespace std;
 
-using ListType =
-    intrusive::slist<Connection, Connection::member_hook_t, intrusive::constant_time_size<true>,
-                     intrusive::cache_last<false>>;
+namespace uring {
 
-struct ListenerInterface::SafeConnList {
-  ListType list;
-  fibers::mutex mu;
-  fibers::condition_variable cond;
-
-  void Link(Connection* c) {
-    std::lock_guard<fibers::mutex> lk(mu);
-    list.push_front(*c);
-    VLOG(2) << "List size " << list.size();
-  }
-
-  void Unlink(Connection* c) {
-    std::lock_guard<fibers::mutex> lk(mu);
-    auto it = list.iterator_to(*c);
-    list.erase(it);
-    DVLOG(2) << "List size " << list.size();
-
-    if (list.empty()) {
-      cond.notify_one();
-    }
-  }
-
-  void AwaitEmpty() {
-    std::unique_lock<fibers::mutex> lk(mu);
-    DVLOG(1) << "AwaitEmpty: List size: " << list.size();
-
-    cond.wait(lk, [this] { return list.empty(); });
-  }
-};
-
-AcceptServer::AcceptServer(ProactorPool* pool, bool break_on_int)
+AcceptServer::AcceptServer(UringPool* pool, bool break_on_int)
     : pool_(pool), ref_bc_(0), break_(break_on_int) {
   if (break_on_int) {
     ProactorBase* proactor = pool_->GetNextProactor();
@@ -123,7 +92,7 @@ unsigned short AcceptServer::AddListener(unsigned short port, ListenerInterface*
   lii->RegisterPool(pool_);
 
   ProactorBase* next = pool_->GetNextProactor();
-  fs->SetProactor((Proactor*)next);
+  fs->SetProactor(next);
   lii->sock_ = std::move(fs);
 
   list_interface_.emplace_back(lii);
@@ -139,6 +108,43 @@ void AcceptServer::BreakListeners() {
   VLOG(1) << "AcceptServer::BreakListeners finished";
 }
 
+}  // namespace uring
+
+
+using ListType =
+    intrusive::slist<Connection, Connection::member_hook_t, intrusive::constant_time_size<true>,
+                     intrusive::cache_last<false>>;
+
+struct ListenerInterface::SafeConnList {
+  ListType list;
+  fibers::mutex mu;
+  fibers::condition_variable cond;
+
+  void Link(Connection* c) {
+    std::lock_guard<fibers::mutex> lk(mu);
+    list.push_front(*c);
+    VLOG(2) << "List size " << list.size();
+  }
+
+  void Unlink(Connection* c) {
+    std::lock_guard<fibers::mutex> lk(mu);
+    auto it = list.iterator_to(*c);
+    list.erase(it);
+    DVLOG(2) << "List size " << list.size();
+
+    if (list.empty()) {
+      cond.notify_one();
+    }
+  }
+
+  void AwaitEmpty() {
+    std::unique_lock<fibers::mutex> lk(mu);
+    DVLOG(1) << "AwaitEmpty: List size: " << list.size();
+
+    cond.wait(lk, [this] { return list.empty(); });
+  }
+};
+
 // Runs in a dedicated fiber for each listener.
 void ListenerInterface::RunAcceptLoop() {
   auto& fiber_props = this_fiber::properties<FiberProps>();
@@ -151,9 +157,9 @@ void ListenerInterface::RunAcceptLoop() {
   PreAcceptLoop(sock_->proactor());
 
   while (true) {
-    FiberSocket::accept_result res = sock_->Accept();
+    FiberSocketBase::accept_result res = sock_->Accept();
     if (!res.has_value()) {
-      FiberSocket::error_code ec = res.error();
+      FiberSocketBase::error_code ec = res.error();
       if (ec != errc::connection_aborted) {
         LOG(ERROR) << "Error calling accept " << ec << "/" << ec.message();
       }
@@ -162,9 +168,8 @@ void ListenerInterface::RunAcceptLoop() {
     std::unique_ptr<FiberSocketBase> peer{res.value()};
 
     VLOG(2) << "Accepted " << peer->native_handle() << ": " << peer->LocalEndpoint();
-    Proactor* next = (Proactor*)pool_->GetNextProactor();  // Could be for another thread.
-
-    ((FiberSocket*)peer.get())->SetProactor(next);
+    ProactorBase* next = pool_->GetNextProactor();  // Could be for another thread.
+    peer->SetProactor(next);
     Connection* conn = NewConnection(next);
     conn->SetSocket(peer.release());
     safe_list.Link(conn);
@@ -183,7 +188,7 @@ void ListenerInterface::RunAcceptLoop() {
   safe_list.mu.lock();
   unsigned cnt = 0;
   for (auto& val : safe_list.list) {
-    val.socket_->Shutdown(SHUT_RDWR);
+    val.Shutdown();
     DVSOCK(1, *val.socket_) << "Shutdown";
     ++cnt;
   }
@@ -225,5 +230,4 @@ void ListenerInterface::RegisterPool(ProactorPool* pool) {
   pool_ = pool;
 }
 
-}  // namespace uring
 }  // namespace util

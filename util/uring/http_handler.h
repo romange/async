@@ -4,27 +4,28 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
+
 #include <boost/beast/http/serializer.hpp>
 #include <boost/beast/http/write.hpp>
 
-#include <absl/container/flat_hash_map.h>
-
-#include "util/uring/accept_server.h"
 #include "util/asio_stream_adapter.h"
 #include "util/http/http_common.h"
+#include "util/listener_interface.h"
+#include "util/uring/accept_server.h"
 
 namespace util {
 namespace uring {
 
 class HttpContext {
-  template <typename Body>
-  using Response = ::boost::beast::http::response<Body>;
+  template <typename Body> using Response = ::boost::beast::http::response<Body>;
   using error_code = ::boost::system::error_code;
 
   AsioStreamAdapter<>& asa_;
 
-public:
-  explicit HttpContext(AsioStreamAdapter<>& asa) : asa_(asa) {}
+ public:
+  explicit HttpContext(AsioStreamAdapter<>& asa) : asa_(asa) {
+  }
 
   template <typename Body> void Invoke(Response<Body>&& msg) {
     // Determine if we should close the connection after
@@ -58,8 +59,12 @@ class HttpListenerBase : public ListenerInterface {
   // Returns true if a callback was registered.
   bool RegisterCb(absl::string_view path, RequestCb cb);
 
-  void set_resource_prefix(const char* prefix) { resource_prefix_ = prefix; }
-  void set_favicon(const char* favicon) { favicon_ = favicon;}
+  void set_resource_prefix(const char* prefix) {
+    resource_prefix_ = prefix;
+  }
+  void set_favicon(const char* favicon) {
+    favicon_ = favicon;
+  }
 
  private:
   bool HandleRoot(const RequestType& rt, HttpContext* cntx) const;
@@ -89,8 +94,7 @@ class HttpHandler2 : public Connection {
 };
 
 // http Listener + handler factory. By default creates HttpHandler.
-template <typename Handler = HttpHandler2>
-class HttpListener : public HttpListenerBase {
+template <typename Handler = HttpHandler2> class HttpListener : public HttpListenerBase {
  public:
   static_assert(std::is_base_of<HttpHandler2, Handler>::value,
                 "Handler must be derived from HttpHandler");

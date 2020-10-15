@@ -4,40 +4,33 @@
 
 #pragma once
 
-#include <pthread.h>
-
-#include <vector>
-
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
+#include "base/RWSpinLock.h"
 #include "base/arena.h"
 #include "base/type_traits.h"
-#include "base/RWSpinLock.h"
 #include "util/proactor_base.h"
 
 namespace util {
-namespace uring {
 
 class ProactorPool {
   template <typename Func, typename... Args>
   using AcceptArgsCheck =
-      typename std::enable_if<base::is_invocable<Func, Args...>::value,
-                              int>::type;
-
- public:
+      typename std::enable_if<base::is_invocable<Func, Args...>::value, int>::type;
   ProactorPool(const ProactorPool&) = delete;
   void operator=(const ProactorPool&) = delete;
 
+ public:
   //! Constructs io_context pool with number of threads equal to 'pool_size'.
   //! pool_size = 0 chooses automatically pool size equal to number of cores in
   //! the system.
   explicit ProactorPool(std::size_t pool_size = 0);
 
-  ~ProactorPool();
+  virtual ~ProactorPool();
 
   //! Starts running all Proactor objects in the pool.
   //! Blocks until all the proactors up and spinning.
-  void Run(uint32_t ring_depth = 256);
+  void Run();
 
   /*! @brief Stops all io_context objects in the pool.
    *
@@ -67,8 +60,7 @@ class ProactorPool {
    * IO-fiber. AsyncOnAll runs asynchronously and will exit before  the task
    * finishes. The 'func' must accept Proactor& as its argument.
    */
-  template <typename Func, AcceptArgsCheck<Func, ProactorBase*> = 0>
-  void AsyncOnAll(Func&& func) {
+  template <typename Func, AcceptArgsCheck<Func, ProactorBase*> = 0> void AsyncOnAll(Func&& func) {
     CheckRunningState();
     for (unsigned i = 0; i < size(); ++i) {
       ProactorBase* p = proactor_[i];
@@ -101,8 +93,7 @@ class ProactorPool {
    *
    * Func must accept "ProactorBase&" and it should not block.
    */
-  template <typename Func, AcceptArgsCheck<Func, ProactorBase*> = 0>
-  void AwaitOnAll(Func&& func) {
+  template <typename Func, AcceptArgsCheck<Func, ProactorBase*> = 0> void AwaitOnAll(Func&& func) {
     fibers_ext::BlockingCounter bc(size());
     auto cb = [func = std::forward<Func>(func), bc](ProactorBase* context) mutable {
       func(context);
@@ -120,8 +111,7 @@ class ProactorPool {
   template <typename Func, AcceptArgsCheck<Func, unsigned, ProactorBase*> = 0>
   void AwaitOnAll(Func&& func) {
     fibers_ext::BlockingCounter bc(size());
-    auto cb = [func = std::forward<Func>(func), bc](unsigned index,
-                                                    ProactorBase* p) mutable {
+    auto cb = [func = std::forward<Func>(func), bc](unsigned index, ProactorBase* p) mutable {
       func(index, p);
       bc.Dec();
     };
@@ -139,10 +129,9 @@ class ProactorPool {
    */
   template <typename Func, AcceptArgsCheck<Func, unsigned, ProactorBase*> = 0>
   void AsyncFiberOnAll(Func&& func) {
-    AsyncOnAll(
-        [func = std::forward<Func>(func)](unsigned i, ProactorBase* context) {
-          ::boost::fibers::fiber(func, i, context).detach();
-        });
+    AsyncOnAll([func = std::forward<Func>(func)](unsigned i, ProactorBase* context) {
+      ::boost::fibers::fiber(func, i, context).detach();
+    });
   }
 
   /**
@@ -171,8 +160,7 @@ class ProactorPool {
   template <typename Func, AcceptArgsCheck<Func, unsigned, ProactorBase*> = 0>
   void AwaitFiberOnAll(Func&& func) {
     fibers_ext::BlockingCounter bc(size());
-    auto cb = [func = std::forward<Func>(func), bc](unsigned i,
-                                                    ProactorBase* context) mutable {
+    auto cb = [func = std::forward<Func>(func), bc](unsigned i, ProactorBase* context) mutable {
       func(i, context);
       bc.Dec();
     };
@@ -207,11 +195,17 @@ class ProactorPool {
   // Currently has average performance and it employs RW spinlock underneath.
   absl::string_view GetString(absl::string_view source);
 
- private:
-  void WrapLoop(size_t index, fibers_ext::BlockingCounter* bc);
-  void CheckRunningState();
+ protected:
+  virtual ProactorBase* CreateProactor() = 0;
+  virtual void InitInThread(unsigned index) = 0;
 
   std::unique_ptr<ProactorBase*[]> proactor_;
+
+ private:
+  void SetupProactors();
+
+  void WrapLoop(size_t index, fibers_ext::BlockingCounter* bc);
+  void CheckRunningState();
 
   /// The next io_context to use for a connection.
   std::atomic_uint_fast32_t next_io_context_{0};
@@ -224,6 +218,4 @@ class ProactorPool {
   enum State { STOPPED, RUN } state_ = STOPPED;
 };
 
-
-}  // namespace uring
 }  // namespace util

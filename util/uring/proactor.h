@@ -14,7 +14,6 @@ namespace util {
 namespace uring {
 
 class UringFiberAlgo;
-class ProactorPool;
 
 class Proactor : public ProactorBase {
   Proactor(const Proactor&) = delete;

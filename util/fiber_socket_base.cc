@@ -122,6 +122,13 @@ auto FiberSocketBase::RemoteEndpoint() const -> endpoint_type {
   return endpoint;
 }
 
+void FiberSocketBase::SetProactor(ProactorBase* p) {
+  CHECK(proactor_ == nullptr);
+  proactor_ = p;
+
+  OnSetProactor();
+}
+
 auto FiberSocketBase::Recv(iovec* ptr, size_t len) -> expected_size_t {
   CHECK_GT(len, 0U);
 

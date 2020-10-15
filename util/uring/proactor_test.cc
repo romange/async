@@ -14,7 +14,7 @@
 #include "base/logging.h"
 #include "util/fibers/fibers_ext.h"
 #include "util/uring/accept_server.h"
-#include "util/uring/proactor_pool.h"
+#include "util/uring/uring_pool.h"
 #include "util/uring/sliding_counter.h"
 #include "util/uring/uring_fiber_algo.h"
 #include "util/uring/varz.h"
@@ -187,7 +187,7 @@ TEST_F(ProactorTest, AsyncEvent) {
 
 TEST_F(ProactorTest, Pool) {
   std::atomic_int val{0};
-  ProactorPool pool{2};
+  UringPool pool{16, 2};
   pool.Run();
 
   pool.AwaitFiberOnAll([&](auto*) { val += 1; });
@@ -230,7 +230,7 @@ TEST_F(ProactorTest, SlidingCounter) {
   uint32_t cnt = proactor_->AwaitBrief([&] { return sc.Sum(); });
   EXPECT_EQ(1, cnt);
 
-  ProactorPool pool{2};
+  UringPool pool{16, 2};
   pool.Run();
   SlidingCounter<4> sc2;
   sc2.Init(&pool);
@@ -243,7 +243,7 @@ TEST_F(ProactorTest, Varz) {
   VarzQps qps("test1");
   ASSERT_DEATH(qps.Inc(), "");  // Messes up log-file softlink.
 
-  ProactorPool pool{2};
+  UringPool pool{16, 2};
   pool.Run();
 
   qps.Init(&pool);

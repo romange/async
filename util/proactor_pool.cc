@@ -2,22 +2,17 @@
 // Author: Roman Gershman (romange@gmail.com)
 //
 
-#include "util/uring/proactor_pool.h"
+#include "util/proactor_pool.h"
 
 #include "base/logging.h"
 #include "base/pthread_utils.h"
-#include "util/uring/proactor.h"
+// #include "util/uring/proactor.h"
 
 DEFINE_uint32(proactor_threads, 0, "Number of io threads in the pool");
-
-// TODO: To fix proactor_reuse_wq
-DEFINE_bool(proactor_reuse_wq, false, "If true reuses the same work-queue for all io_urings "
-                                     "in the pool");
 
 using namespace std;
 
 namespace util {
-namespace uring {
 
 ProactorPool::ProactorPool(std::size_t pool_size) {
   if (pool_size == 0) {
@@ -40,42 +35,15 @@ void ProactorPool::CheckRunningState() {
   CHECK_EQ(RUN, state_);
 }
 
-void ProactorPool::Run(uint32_t ring_depth) {
-  CHECK_EQ(STOPPED, state_);
-
-  char buf[32];
-
-  auto init_proactor = [this, ring_depth, &buf](int i, int wq_fd) mutable {
-    snprintf(buf, sizeof(buf), "Proactor%u", i);
-    Proactor* p = new Proactor;
-    proactor_[i] = p;
-    auto cb = [p, wq_fd, ring_depth]() mutable {
-      p->Init(ring_depth, wq_fd);
-      p->Run();
-    };
-    pthread_t tid = base::StartThread(buf, cb);
-    cpu_set_t cps;
-    CPU_ZERO(&cps);
-    CPU_SET(i % thread::hardware_concurrency(), &cps);
-
-    int rc = pthread_setaffinity_np(tid, sizeof(cpu_set_t), &cps);
-    LOG_IF(WARNING, rc) << "Error calling pthread_setaffinity_np: "
-                        << strerror(rc) << "\n";
-  };
-  init_proactor(0, -1);
-  int wq_fd = FLAGS_proactor_reuse_wq ? ((Proactor*)proactor_[0])->ring_fd() : -1;
-
-  for (size_t i = 1; i < pool_size_; ++i) {
-    init_proactor(i, wq_fd);
-  }
-  state_ = RUN;
+void ProactorPool::Run() {
+  SetupProactors();
 
   AwaitOnAll([](unsigned index, auto*) {
     // It seems to simplify things in kernel for io_uring.
     // https://github.com/axboe/liburing/issues/218
     // I am not sure what's how it impacts higher application levels.
     unshare(CLONE_FS);
-    Proactor::SetIndex(index);
+    ProactorBase::SetIndex(index);
   });
 
   LOG(INFO) << "Running " << pool_size_ << " io threads";
@@ -110,7 +78,7 @@ ProactorBase* ProactorPool::GetNextProactor() {
     index = 0;
 
   next_io_context_.store(index, std::memory_order_relaxed);
-return proactor;
+  return proactor;
 }
 
 absl::string_view ProactorPool::GetString(absl::string_view source) {
@@ -135,5 +103,31 @@ absl::string_view ProactorPool::GetString(absl::string_view source) {
   return res;
 }
 
-}  // namespace uring
+void ProactorPool::SetupProactors() {
+  CHECK_EQ(STOPPED, state_);
+
+  char buf[32];
+
+  for (unsigned i = 0; i < pool_size_; ++i) {
+    snprintf(buf, sizeof(buf), "Proactor%u", i);
+
+    proactor_[i]= CreateProactor();
+    auto cb = [this, i]() mutable {
+      this->InitInThread(i);
+      proactor_[i]->Run();
+    };
+
+    pthread_t tid = base::StartThread(buf, std::move(cb));
+    cpu_set_t cps;
+    CPU_ZERO(&cps);
+    CPU_SET(i % thread::hardware_concurrency(), &cps);
+
+    int rc = pthread_setaffinity_np(tid, sizeof(cpu_set_t), &cps);
+    LOG_IF(WARNING, rc) << "Error calling pthread_setaffinity_np: "
+                        << strerror(rc) << "\n";
+  }
+
+  state_ = RUN;
+}
+
 }  // namespace util

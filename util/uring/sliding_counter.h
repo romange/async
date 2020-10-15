@@ -9,7 +9,7 @@
 #include <memory>
 #include <numeric>
 
-#include "util/uring/proactor_pool.h"
+#include "util/proactor_pool.h"
 
 namespace util {
 namespace uring {
