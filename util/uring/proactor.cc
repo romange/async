@@ -187,8 +187,9 @@ void Proactor::Run() {
       // Eventually UringFiberAlgo will resume back this fiber in suspend_until
       // function.
       DVLOG(2) << "Suspend ioloop";
-      tl_info_.monotonic_time = GetClockNanos();
-      sched->suspend();
+      uint64_t now = GetClockNanos();
+      tl_info_.monotonic_time = now;
+      scheduler->SuspendMain(now);
 
       DVLOG(2) << "Resume ioloop";
 

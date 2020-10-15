@@ -15,7 +15,6 @@ namespace epoll {
 using namespace boost;
 using namespace std;
 
-
 EpollFiberAlgo::EpollFiberAlgo(ProactorBase* ev_cntr) : FiberSchedAlgo(ev_cntr) {
   auto cb = [tfd = timer_fd_](uint32_t event_mask, EvController*) {
     uint64_t val;
@@ -32,32 +31,21 @@ EpollFiberAlgo::~EpollFiberAlgo() {
   static_cast<EvController*>(proactor_)->Disarm(arm_index_);
 }
 
+void EpollFiberAlgo::SuspendWithTimer(const time_point& abs_time) noexcept {
+  using namespace chrono;
+  constexpr uint64_t kNsFreq = 1000000000ULL;
+  const chrono::time_point<steady_clock, nanoseconds>& tp = abs_time;
+  int64_t ns = time_point_cast<nanoseconds>(tp).time_since_epoch().count();
 
-// suspend_until halts the thread in case there are no active fibers to run on it.
-// This function is called by dispatcher fiber.
-void EpollFiberAlgo::suspend_until(const time_point& abs_time) noexcept {
-  auto* cur_cntx = fibers::context::active();
+  struct itimerspec abs_spec;
 
-  DCHECK(cur_cntx->is_context(fibers::type::dispatcher_context));
-  if (time_point::max() != abs_time) {
-    using namespace chrono;
-    constexpr uint64_t kNsFreq = 1000000000ULL;
-    const chrono::time_point<steady_clock, nanoseconds>& tp = abs_time;
-    int64_t ns = time_point_cast<nanoseconds>(tp).time_since_epoch().count();
+  abs_spec.it_value.tv_sec = ns / kNsFreq;
+  abs_spec.it_value.tv_nsec = ns - abs_spec.it_value.tv_sec * kNsFreq;
 
-    struct itimerspec abs_spec;
+  memset(&abs_spec.it_interval, 0, sizeof(abs_spec.it_interval));
 
-    abs_spec.it_value.tv_sec = ns / kNsFreq;
-    abs_spec.it_value.tv_nsec = ns - abs_spec.it_value.tv_sec * kNsFreq;
-
-    memset(&abs_spec.it_interval, 0, sizeof(abs_spec.it_interval));
-
-    int res = timerfd_settime(timer_fd_, TFD_TIMER_ABSTIME, &abs_spec, NULL);
-    CHECK_EQ(0, res) << strerror(errno);
-  }
-
-  // schedule does not block just marks main_cntx_ for activation.
-  main_cntx_->get_scheduler()->schedule(main_cntx_);
+  int res = timerfd_settime(timer_fd_, TFD_TIMER_ABSTIME, &abs_spec, NULL);
+  CHECK_EQ(0, res) << strerror(errno);
 }
 
 }  // namespace epoll

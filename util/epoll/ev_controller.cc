@@ -143,8 +143,9 @@ void EvController::Run() {
       // Eventually UringFiberAlgo will resume back this fiber in suspend_until
       // function.
       DVLOG(2) << "Suspend ioloop";
-      tl_info_.monotonic_time = GetClockNanos();
-      sched->suspend();
+      auto now = GetClockNanos();
+      tl_info_.monotonic_time = now;
+      algo->SuspendMain(now);
 
       DVLOG(2) << "Resume ioloop";
       spin_loops = 0;

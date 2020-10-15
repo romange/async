@@ -12,12 +12,9 @@ class EpollFiberAlgo : public FiberSchedAlgo {
    explicit EpollFiberAlgo(ProactorBase* proactor);
   ~EpollFiberAlgo();
 
-  // suspend_until halts the thread in case there are no active fibers to run on it.
-  // This is done by dispatcher fiber.
-  void suspend_until(time_point const& abs_time) noexcept final;
-  //]
-
  private:
+  void SuspendWithTimer(const time_point& tp) noexcept final;
+
   unsigned arm_index_;
 };
 

@@ -36,6 +36,14 @@ void FiberSchedAlgo::awakened(FiberContext* ctx, FiberProps& props) noexcept {
     DVLOG(2) << "Awakened " << props.name();
 
     ++ready_cnt_;  // increase the number of awakened/ready fibers.
+
+    uint64_t now = absl::GetCurrentTimeNanos();
+    props.awaken_ts_ = now;
+    if (ctx != main_cntx_ && (mask_ & MAIN_LOOP_SUSPEND) && !main_cntx_->ready_is_linked()) {
+      if (now - suspend_main_ts_ > 1000000) { // 1ms
+        main_cntx_->ready_link(rqueue_);
+      }
+    }
   }
 
   ctx->ready_link(rqueue_); /*< fiber, enqueue on ready queue >*/
@@ -54,6 +62,13 @@ auto FiberSchedAlgo::pick_next() noexcept -> FiberContext* {
     --ready_cnt_;
     FiberProps* props = (FiberProps*)ctx->get_properties();
     DVLOG(1) << "Switching to " << props->name();  // TODO: to switch to RAW_LOG.
+    uint64_t now = absl::GetCurrentTimeNanos();
+    props->resume_ts_ = now;
+    ProactorBase::tl_info_.monotonic_time = now;
+    uint64_t delta_micros = (now - props->awaken_ts_) / 1000;
+    if (delta_micros > 30000) {
+      LOG(INFO) << "Took " << delta_micros / 1000 << " msec to activate " << props->name();
+    }
   } else {
     DVLOG(1) << "Switching to dispatch";  // TODO: to switch to RAW_LOG.
   }
@@ -98,6 +113,36 @@ void FiberSchedAlgo::notify() noexcept {
       from->algo_notify_cnt_.fetch_add(1, std::memory_order_relaxed);
     proactor_->WakeRing();
   }
+}
+
+// suspend_until halts the thread in case there are no active fibers to run on it.
+// This function is called by dispatcher fiber.
+void FiberSchedAlgo::suspend_until(time_point const& abs_time) noexcept {
+  FiberContext* cur_cntx = fibers::context::active();
+
+  DCHECK(cur_cntx->is_context(fibers::type::dispatcher_context));
+  CHECK_EQ(MAIN_LOOP_SUSPEND, mask_ & MAIN_LOOP_SUSPEND) << "Deadlock is detected";
+
+  if (time_point::max() != abs_time) {
+    SuspendWithTimer(abs_time);
+  }
+
+  // schedule does not block just marks main_cntx_ for activation.
+  main_cntx_->get_scheduler()->schedule(main_cntx_);
+}
+
+void FiberSchedAlgo::SuspendMain(uint64_t now) {
+  // block this fiber till all (ready) fibers are processed
+  // or when  AsioScheduler::suspend_until() has been called or awaken() decided to resume it.
+  mask_ |= MAIN_LOOP_SUSPEND;
+
+  DVLOG(2) << "WaitTillFibersSuspend:Start";
+  suspend_main_ts_ = now;
+
+  main_cntx_->suspend();
+  mask_ &= ~MAIN_LOOP_SUSPEND;
+
+  DVLOG(2) << "WaitTillFibersSuspend:End";
 }
 
 }  // namespace util
