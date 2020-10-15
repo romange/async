@@ -15,10 +15,10 @@
 #include "base/histogram.h"
 #include "base/init.h"
 #include "util/asio_stream_adapter.h"
-#include "util/uring/accept_server.h"
+#include "util/accept_server.h"
 #include "util/uring/fiber_socket.h"
 #include "util/uring/http_handler.h"
-#include "util/uring/proactor_pool.h"
+#include "util/uring/uring_pool.h"
 #include "util/uring/uring_fiber_algo.h"
 #include "util/uring/varz.h"
 
@@ -27,7 +27,7 @@ using namespace std;
 using namespace util;
 using uring::FiberSocket;
 using uring::Proactor;
-using uring::ProactorPool;
+using uring::UringPool;
 using uring::SubmitEntry;
 using tcp = asio::ip::tcp;
 
@@ -42,7 +42,7 @@ DEFINE_string(connect, "", "hostname or ip address to connect to in client mode"
 
 uring::VarzQps ping_qps("ping-qps");
 
-class EchoConnection : public uring::Connection {
+class EchoConnection : public Connection {
  public:
   EchoConnection() {
     work_buf_.reset(new uint8_t[1 << 16]);
@@ -57,7 +57,7 @@ class EchoConnection : public uring::Connection {
 
 system::error_code EchoConnection::ReadMsg(size_t* sz) {
   system::error_code ec;
-  AsioStreamAdapter<FiberSocket> asa(socket_);
+  AsioStreamAdapter<FiberSocketBase> asa(*socket_);
 
   uint8_t buf[4];
   size_t buf_sz = asio::read(asa, asio::buffer(buf), ec);
@@ -109,7 +109,7 @@ void EchoConnection::HandleRequests() {
       auto res1 = recvmsg(socket_.RealFd(), &msg, 0);
       CHECK_EQ(res1, 8) << errno;
 #endif
-      auto res1 = socket_.RecvMsg(msg, 0);
+      auto res1 = socket_->RecvMsg(msg, 0);
       if (!res1.has_value()) {
         if (!FiberSocket::IsConnClosed(res1.error())) {
           LOG(WARNING) << "Broke on " << res1.error();
@@ -131,7 +131,7 @@ void EchoConnection::HandleRequests() {
       int64_t sender_ts = absl::little_endian::Load64(buf);
 
       absl::little_endian::Store64(buf, recv_now);
-      auto res = socket_.Send(asio::buffer(buf, 8));
+      auto res = socket_->Send(asio::buffer(buf, 8));
       if (res.has_value()) {
         CHECK_EQ(8u, res.value());
       } else {
@@ -163,15 +163,15 @@ void EchoConnection::HandleRequests() {
       absl::little_endian::Store32(buf, sz);
       vec[1].iov_base = work_buf_.get();
       vec[1].iov_len = sz;
-      auto res = socket_.Send(vec, 2);
+      auto res = socket_->Send(vec, 2);
       CHECK(res.has_value());
     }
   }
 }
 
-class EchoListener : public uring::ListenerInterface {
+class EchoListener : public ListenerInterface {
  public:
-  virtual uring::Connection* NewConnection(Proactor* context) {
+  virtual Connection* NewConnection(ProactorBase* context) final {
     return new EchoConnection;
   }
 };
@@ -179,7 +179,7 @@ class EchoListener : public uring::ListenerInterface {
 void RunServer(ProactorPool* pp) {
   ping_qps.Init(pp);
 
-  uring::AcceptServer uring_acceptor(pp);
+  AcceptServer uring_acceptor(pp);
   uring_acceptor.AddListener(FLAGS_port, new EchoListener);
   if (FLAGS_http_port >= 0) {
     uint16_t port = uring_acceptor.AddListener(FLAGS_http_port, new uring::HttpListener<>);
@@ -220,7 +220,7 @@ Driver::Driver(const tcp::endpoint& ep, Proactor* p) : socket_(p) {
 
 void Driver::SendRcvPing(Proactor* p) {
   uring::SubmitEntry se1 = p->GetSubmitEntry(nullptr, 0);
-  se1.PrepSendMsg(socket_.RealFd(), &msg_, 0);
+  se1.PrepSendMsg(socket_.native_handle(), &msg_, 0);
   se1.sqe()->flags |= IOSQE_IO_LINK;
   auto res = socket_.Recv(asio::buffer(buf_, 8));
   CHECK(res.has_value());
@@ -233,7 +233,7 @@ void Driver::Run(base::Histogram* dest) {
   base::Histogram hist;
 
   if (FLAGS_size <= 0) {
-    Proactor* p = socket_.proactor();
+    Proactor* p = static_cast<Proactor*>(socket_.proactor());
     // Warmup
     for (unsigned i = 0; i < 10; ++i) {
       uint64_t start = absl::GetCurrentTimeNanos();
@@ -283,12 +283,12 @@ void Driver::Run(base::Histogram* dest) {
 mutex lat_mu;
 base::Histogram lat_hist;
 
-void RunClient(tcp::endpoint ep, Proactor* p) {
+void RunClient(tcp::endpoint ep, ProactorBase* p) {
   vector<fibers::fiber> drivers(FLAGS_c);
   base::Histogram hist;
   for (size_t i = 0; i < drivers.size(); ++i) {
     drivers[i] = fibers::fiber([&] {
-      Driver d{ep, p};
+      Driver d{ep, static_cast<Proactor*>(p)};
       d.Run(&hist);
     });
   }
@@ -305,7 +305,7 @@ int main(int argc, char* argv[]) {
 
   CHECK_GT(FLAGS_port, 0);
 
-  ProactorPool pp;
+  UringPool pp;
   pp.Run();
 
   if (FLAGS_connect.empty()) {
@@ -318,7 +318,7 @@ int main(int argc, char* argv[]) {
     CHECK(!ec) << "Could not resolve " << FLAGS_connect << " " << ec.message();
     CHECK(!results.empty());
     auto start = absl::GetCurrentTimeNanos();
-    pp.AwaitFiberOnAll([&](Proactor* p) { RunClient(*results.begin(), p); });
+    pp.AwaitFiberOnAll([&](auto* p) { RunClient(*results.begin(), p); });
     auto dur = absl::GetCurrentTimeNanos() - start;
     size_t dur_ms = std::max<size_t>(1, dur / 1000000);
     size_t dur_sec = std::max<size_t>(1, dur_ms / 1000);

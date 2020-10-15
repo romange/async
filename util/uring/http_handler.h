@@ -99,7 +99,7 @@ template <typename Handler = HttpHandler2> class HttpListener : public HttpListe
   static_assert(std::is_base_of<HttpHandler2, Handler>::value,
                 "Handler must be derived from HttpHandler");
 
-  Connection* NewConnection(Proactor*) final {
+  Connection* NewConnection(ProactorBase*) final {
     return new Handler(this);
   }
 };

@@ -1,15 +1,14 @@
 // Copyright 2013, Beeri 15.  All rights reserved.
 // Author: Roman Gershman (romange@gmail.com)
 //
-#include "util/http/http_common.h"
-#include "util/uring/accept_server.h"
-#include "util/uring/proactor_pool.h"
+#include <absl/strings/str_join.h>
 
-// #include "util/http/http_conn_handler.h"
-#include "absl/strings/str_join.h"
 #include "base/init.h"
+#include "util/accept_server.h"
 #include "util/html/sorted_table.h"
+#include "util/http/http_common.h"
 #include "util/uring/http_handler.h"
+#include "util/uring/uring_pool.h"
 #include "util/uring/varz.h"
 
 DEFINE_int32(port, 8080, "Port number.");
@@ -24,10 +23,10 @@ uring::VarzQps http_qps("bar-qps");
 int main(int argc, char** argv) {
   MainInitGuard guard(&argc, &argv);
 
-  uring::ProactorPool pool;
+  uring::UringPool pool;
   pool.Run();
 
-  uring::AcceptServer server(&pool);
+  AcceptServer server(&pool);
 
   uring::HttpListener<>* listener = new uring::HttpListener<>;
   auto cb = [](const http::QueryArgs& args, uring::HttpContext* send) {
