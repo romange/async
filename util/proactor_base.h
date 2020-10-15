@@ -140,7 +140,7 @@ class ProactorBase {
   enum { WAIT_SECTION_STATE = 1UL << 31 };
 
   // Called only from external threads.
-  virtual void WakeRing() = 0;
+  void WakeRing();
 
   void WakeupIfNeeded();
 
@@ -149,6 +149,7 @@ class ProactorBase {
   bool is_stopped_ = true;
 
   std::atomic_uint32_t tq_seq_{0}, tq_full_ev_{0};
+  std::atomic_uint32_t tq_wakeup_ev_{0};
   std::atomic_uint32_t algo_notify_cnt_{0} /* how many times this FiberAlgo woke up others */;
 
   // We use fu2 function to allow moveable semantics.

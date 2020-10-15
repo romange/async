@@ -18,15 +18,9 @@ using namespace boost;
 using namespace std;
 
 UringFiberAlgo::UringFiberAlgo(Proactor* proactor) : FiberSchedAlgo(proactor) {
-  if (!proactor->support_timeout_) {
-    timer_fd_ = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
-    CHECK_GE(timer_fd_, 0);
-  }
 }
 
 UringFiberAlgo::~UringFiberAlgo() {
-  if (timer_fd_ >= 0)
-    close(timer_fd_);
 }
 
 

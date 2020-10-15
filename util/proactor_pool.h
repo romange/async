@@ -24,7 +24,7 @@ class ProactorPool {
   //! Constructs io_context pool with number of threads equal to 'pool_size'.
   //! pool_size = 0 chooses automatically pool size equal to number of cores in
   //! the system.
-  explicit ProactorPool(std::size_t pool_size = 0);
+  explicit ProactorPool(std::size_t pool_size);
 
   virtual ~ProactorPool();
 

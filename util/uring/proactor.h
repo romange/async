@@ -80,7 +80,6 @@ class Proactor : public ProactorBase {
   FiberSocketBase* CreateSocket() final;
 
  private:
-  void WakeRing() final;
   void DispatchCompletions(io_uring_cqe* cqes, unsigned count);
   void CheckForTimeoutSupport();
 
@@ -97,7 +96,6 @@ class Proactor : public ProactorBase {
   uint8_t support_timeout_ : 1;
   uint8_t reserved_f_ : 4;
 
-  std::atomic_uint32_t tq_wakeup_ev_{0};
   EventCount sqe_avail_;
   ::boost::fibers::context* main_loop_ctx_ = nullptr;
 

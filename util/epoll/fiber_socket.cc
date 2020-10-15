@@ -9,7 +9,6 @@
 
 #include "base/logging.h"
 #include "base/stl_util.h"
-#include "util/epoll/ev_controller.h"
 
 #define VSOCK(verbosity) VLOG(verbosity) << "sock[" << native_handle() << "] "
 #define DVSOCK(verbosity) DVLOG(verbosity) << "sock[" << native_handle() << "] "
@@ -44,109 +43,47 @@ FiberSocket::~FiberSocket() {
   LOG_IF(WARNING, ec) << "Error closing socket " << ec << "/" << ec.message();
 }
 
-FiberSocket& FiberSocket::operator=(FiberSocket&& other) noexcept {
-  if (fd_ >= 0) {
-    error_code ec = Close();
-    LOG_IF(WARNING, ec) << "Error closing socket " << ec << "/" << ec.message();
-  }
-  DCHECK_EQ(-1, fd_);
-
-  swap(fd_, other.fd_);
-  p_ = other.p_;
-  other.p_ = nullptr;
-
-  return *this;
-}
-
-auto FiberSocket::Shutdown(int how) -> error_code {
-  CHECK_GE(fd_, 0);
-
-  // If we shutdown and then try to Send/Recv - the call will stall since no data
-  // is sent/received. Therefore we remember the state to allow consistent API experience.
-  error_code ec;
-  if (fd_ & IS_SHUTDOWN)
-    return ec;
-
-  posix_err_wrap(::shutdown(fd_, how), &ec);
-  fd_ |= IS_SHUTDOWN;  // Enter shutdown state unrelated to the success of the call.
-
-  return ec;
-}
 
 auto FiberSocket::Close() -> error_code {
   error_code ec;
   if (fd_ >= 0) {
     DVSOCK(1) << "Closing socket";
 
-    int fd = fd_ & FD_MASK;
-    p_->Disarm(arm_index_);
+    int fd = native_handle();
+    GetEv()->Disarm(arm_index_);
     posix_err_wrap(::close(fd), &ec);
     fd_ = -1;
   }
   return ec;
 }
 
-auto FiberSocket::Listen(unsigned port, unsigned backlog, uint32_t sock_opts_mask) -> error_code {
-  CHECK_EQ(fd_, -1) << "Close socket before!";
 
-  error_code ec;
-  fd_ = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-  if (posix_err_wrap(fd_, &ec) < 0)
-    return ec;
-
-  const int val = 1;
-  for (int opt = 0; sock_opts_mask; ++opt) {
-    if (sock_opts_mask & 1) {
-      if (setsockopt(fd_, SOL_SOCKET, opt, &val, sizeof(val)) < 0) {
-        LOG(WARNING) << "setsockopt: could not set opt " << opt << ", " << strerror(errno);
-      }
-    }
-    sock_opts_mask >>= 1;
-  }
-
-  sockaddr_in server_addr;
-  memset(&server_addr, 0, sizeof(server_addr));
-  server_addr.sin_family = AF_INET;
-  server_addr.sin_port = htons(port);
-  server_addr.sin_addr.s_addr = INADDR_ANY;
-
-  if (posix_err_wrap(bind(fd_, (struct sockaddr*)&server_addr, sizeof(server_addr)), &ec) < 0)
-    return ec;
-
-  VSOCK(1) << "Listening";
-
-  posix_err_wrap(listen(fd_, backlog), &ec);
-  return ec;
-}
-
-void FiberSocket::SetController(EvController* p) {
-  CHECK(p_ == nullptr);
-  p_ = p;
-
+void FiberSocket::OnSetProactor() {
   if (fd_ >= 0) {
     auto cb = [this](uint32 mask, EvController* cntr) { Wakey(mask, cntr); };
-    arm_index_ = p->Arm(fd_ & FD_MASK, std::move(cb), EPOLLIN);
+
+    arm_index_ = GetEv()->Arm(native_handle(), std::move(cb), EPOLLIN);
   }
 }
 
-auto FiberSocket::Accept(FiberSocket* peer) -> error_code {
-  CHECK(p_);
+auto FiberSocket::Accept() -> accept_result {
+  CHECK(proactor());
 
   sockaddr_in client_addr;
   socklen_t addr_len = sizeof(client_addr);
-
   error_code ec;
 
-  int real_fd = fd_ & FD_MASK;
-
+  int real_fd = native_handle();
   current_context_ = fibers::context::active();
 
   while (true) {
     int res =
         accept4(real_fd, (struct sockaddr*)&client_addr, &addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
     if (res >= 0) {
-      *peer = FiberSocket{res};
-      break;
+      FiberSocket* fs = new FiberSocket{nullptr};
+      fs->fd_ = res;
+      current_context_ = nullptr;
+      return fs;
     }
 
     DCHECK_EQ(-1, res);
@@ -159,12 +96,12 @@ auto FiberSocket::Accept(FiberSocket* peer) -> error_code {
     current_context_->suspend();
   }
   current_context_ = nullptr;
-  return ec;
+  return nonstd::make_unexpected(ec);
 }
 
 auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
   CHECK_EQ(fd_, -1);
-  CHECK(p_ && p_->InMyThread());
+  CHECK(proactor() && proactor()->InMyThread());
 
   error_code ec;
 
@@ -173,7 +110,7 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
     return ec;
 
   auto cb = [this](uint32 mask, EvController* cntr) { Wakey(mask, cntr); };
-  arm_index_ = p_->Arm(fd_, std::move(cb), EPOLLIN);
+  arm_index_ = GetEv()->Arm(fd_, std::move(cb), EPOLLIN);
   current_context_ = fibers::context::active();
 
   while (true) {
@@ -199,37 +136,8 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
   return ec;
 }
 
-auto FiberSocket::LocalEndpoint() const -> endpoint_type {
-  endpoint_type endpoint;
-
-  if (fd_ < 0)
-    return endpoint;
-  socklen_t addr_len = endpoint.capacity();
-  error_code ec;
-
-  posix_err_wrap(::getsockname(fd_ & FD_MASK, endpoint.data(), &addr_len), &ec);
-  CHECK(!ec) << ec << "/" << ec.message() << " while running getsockname";
-
-  endpoint.resize(addr_len);
-
-  return endpoint;
-}
-
-auto FiberSocket::RemoteEndpoint() const -> endpoint_type {
-  endpoint_type endpoint;
-  CHECK_GT(fd_, 0);
-
-  socklen_t addr_len = endpoint.capacity();
-  error_code ec;
-
-  if (getpeername(fd_ & FD_MASK, endpoint.data(), &addr_len) == 0)
-    endpoint.resize(addr_len);
-
-  return endpoint;
-}
-
 auto FiberSocket::Send(const iovec* ptr, size_t len) -> expected_size_t {
-  CHECK(p_);
+  CHECK(proactor());
   CHECK_GT(len, 0U);
   CHECK_GE(fd_, 0);
 
@@ -278,26 +186,21 @@ auto FiberSocket::Send(const iovec* ptr, size_t len) -> expected_size_t {
   return nonstd::make_unexpected(std::move(ec));
 }
 
-auto FiberSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
-  CHECK_GT(len, 0U);
-  CHECK(p_);
+auto FiberSocket::RecvMsg(const msghdr& msg, int flags) -> expected_size_t {
+  CHECK(proactor());
   CHECK_GE(fd_, 0);
+  CHECK_GT(msg.msg_iovlen, 0U);
 
   if (fd_ & IS_SHUTDOWN) {
     return nonstd::make_unexpected(std::make_error_code(std::errc::connection_aborted));
   }
 
-  msghdr msg;
-  memset(&msg, 0, sizeof(msg));
-  msg.msg_iov = const_cast<iovec*>(ptr);
-  msg.msg_iovlen = len;
-
-  int fd = fd_ & FD_MASK;
+  int fd = native_handle();
   current_context_ = fibers::context::active();
 
   ssize_t res;
   while (true) {
-    res = recvmsg(fd, &msg, 0);
+    res = recvmsg(fd, const_cast<msghdr*>(&msg), flags);
     if (res > 0) {  // if res is 0, that means a peer closed the socket.
       current_context_ = nullptr;
       return res;

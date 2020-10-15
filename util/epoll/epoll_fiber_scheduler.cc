@@ -16,13 +16,7 @@ using namespace boost;
 using namespace std;
 
 
-EpollFiberAlgo::EpollFiberAlgo(EvController* ev_cntr) : ev_cntrl_(ev_cntr) {
-  main_cntx_ = fibers::context::active();
-  CHECK(main_cntx_->is_context(fibers::type::main_context));
-
-  timer_fd_ = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
-  CHECK_GE(timer_fd_, 0);
-
+EpollFiberAlgo::EpollFiberAlgo(ProactorBase* ev_cntr) : FiberSchedAlgo(ev_cntr) {
   auto cb = [tfd = timer_fd_](uint32_t event_mask, EvController*) {
     uint64_t val;
     int res = read(tfd, &val, sizeof(val));
@@ -31,68 +25,13 @@ EpollFiberAlgo::EpollFiberAlgo(EvController* ev_cntr) : ev_cntrl_(ev_cntr) {
     this_fiber::yield();
   };
 
-  arm_index_ = ev_cntrl_->Arm(timer_fd_, std::move(cb), EPOLLIN);
+  arm_index_ = static_cast<EvController*>(ev_cntr)->Arm(timer_fd_, std::move(cb), EPOLLIN);
 }
 
 EpollFiberAlgo::~EpollFiberAlgo() {
-  ev_cntrl_->Disarm(arm_index_);
-
-  close(timer_fd_);
+  static_cast<EvController*>(proactor_)->Disarm(arm_index_);
 }
 
-void EpollFiberAlgo::awakened(FiberContext* ctx, EpollFiberProps& props) noexcept {
-  DCHECK(!ctx->ready_is_linked());
-
-  if (ctx->is_context(fibers::type::dispatcher_context)) {
-    DVLOG(2) << "Awakened dispatch";
-  } else {
-    DVLOG(2) << "Awakened " << props.name();
-
-    ++ready_cnt_;  // increase the number of awakened/ready fibers.
-  }
-
-  ctx->ready_link(rqueue_); /*< fiber, enqueue on ready queue >*/
-}
-
-auto EpollFiberAlgo::pick_next() noexcept -> FiberContext* {
-  DVLOG(2) << "pick_next: " << ready_cnt_ << "/" << rqueue_.size();
-
-  if (rqueue_.empty())
-    return nullptr;
-
-  FiberContext* ctx = &rqueue_.front();
-  rqueue_.pop_front();
-
-  if (!ctx->is_context(boost::fibers::type::dispatcher_context)) {
-    --ready_cnt_;
-    EpollFiberProps* props = (EpollFiberProps*)ctx->get_properties();
-    DVLOG(1) << "Switching to " << props->name();  // TODO: to switch to RAW_LOG.
-  } else {
-    DVLOG(1) << "Switching to dispatch";  // TODO: to switch to RAW_LOG.
-  }
-  return ctx;
-}
-
-void EpollFiberAlgo::property_change(FiberContext* ctx, EpollFiberProps& props) noexcept {
-  if (!ctx->ready_is_linked()) {
-    return;
-  }
-
-  // Found ctx: unlink it
-  ctx->ready_unlink();
-  if (!ctx->is_context(fibers::type::dispatcher_context)) {
-    --ready_cnt_;
-  }
-
-  // Here we know that ctx was in our ready queue, but we've unlinked
-  // it. We happen to have a method that will (re-)add a context* to the
-  // right place in the ready queue.
-  awakened(ctx, props);
-}
-
-bool EpollFiberAlgo::has_ready_fibers() const noexcept {
-  return ready_cnt_ > 0;
-}
 
 // suspend_until halts the thread in case there are no active fibers to run on it.
 // This function is called by dispatcher fiber.
@@ -119,22 +58,6 @@ void EpollFiberAlgo::suspend_until(const time_point& abs_time) noexcept {
 
   // schedule does not block just marks main_cntx_ for activation.
   main_cntx_->get_scheduler()->schedule(main_cntx_);
-}
-
-// This function is called from remote threads, to wake this thread in case it's sleeping.
-// In our case, "sleeping" means - might stuck the wait function waiting for completion events.
-// wait_for_cqe is the only place where the thread can be stalled.
-void EpollFiberAlgo::notify() noexcept {
-  DVLOG(1) << "notify from " << syscall(SYS_gettid);
-
-  // We signal so that
-  // 1. Main context should awake if it is not
-  // 2. it needs to yield to dispatch context that will put active fibers into
-  // ready queue.
-  auto prev_val = ev_cntrl_->tq_seq_.fetch_or(1, std::memory_order_relaxed);
-  if (prev_val == EvController::WAIT_SECTION_STATE) {
-    ev_cntrl_->DoWake();
-  }
 }
 
 }  // namespace epoll

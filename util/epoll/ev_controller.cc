@@ -4,21 +4,18 @@
 
 #include "util/epoll/ev_controller.h"
 
-#include <string.h>
 #include <signal.h>
-#include <sys/eventfd.h>
+#include <string.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 
-#include <boost/fiber/operations.hpp>
-#include <boost/fiber/scheduler.hpp>
-
-#include "absl/base/attributes.h"
 #include "absl/time/clock.h"
 #include "base/logging.h"
 #include "base/proc_util.h"
 #include "util/epoll/epoll_fiber_scheduler.h"
+#include "util/epoll/fiber_socket.h"
 
-#define EV_CHECK(x)                                                           \
+#define EV_CHECK(x)                                                              \
   do {                                                                           \
     int __res_val = (x);                                                         \
     if (ABSL_PREDICT_FALSE(__res_val < 0)) {                                     \
@@ -28,7 +25,6 @@
     }                                                                            \
   } while (false)
 
-
 using namespace boost;
 namespace ctx = boost::context;
 
@@ -37,82 +33,28 @@ namespace epoll {
 
 namespace {
 
-
-struct signal_state {
-  struct Item {
-    EvController* ev_controller = nullptr;
-    std::function<void(int)> cb;
-  };
-
-  Item signal_map[NSIG];
-};
-
-signal_state* get_signal_state() {
-  static signal_state state;
-
-  return &state;
-}
-
-void SigAction(int signal, siginfo_t*, void*) {
-  signal_state* state = get_signal_state();
-  DCHECK_LT(signal, _NSIG);
-
-  auto& item = state->signal_map[signal];
-  auto cb = [signal, &item] { item.cb(signal); };
-
-  if (item.ev_controller && item.cb) {
-    item.ev_controller->AsyncFiber(std::move(cb));
-  } else {
-    LOG(ERROR) << "Tangling signal handler " << signal;
-  }
-}
-
 inline uint64_t GetClockNanos() {
-  timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return ts.tv_sec * std::nano::den + ts.tv_nsec;
+  return absl::GetCurrentTimeNanos();
 }
-
 
 constexpr uint64_t kIgnoreIndex = 0;
 constexpr uint64_t kNopIndex = 2;
 constexpr uint64_t kUserDataCbIndex = 1024;
-constexpr uint32_t kSpinLimit = 100;
+constexpr uint32_t kSpinLimit = 30;
 
 }  // namespace
 
-thread_local EvController::TLInfo EvController::tl_info_;
-
-EvController::EvController() : task_queue_(128) {
-  event_fd_ = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-  CHECK_GE(event_fd_, 0);
+EvController::EvController() : ProactorBase() {
   epoll_fd_ = epoll_create1(EPOLL_CLOEXEC);
   CHECK_GE(epoll_fd_, 0);
-  VLOG(1) << "Created event_fd " << event_fd_ << ", epoll_fd_ " << epoll_fd_;
-
-  volatile ctx::fiber dummy;  // For some weird reason I need this to pull
-                              // boost::context into linkage.
+  VLOG(1) << "Created epoll_fd_ " << epoll_fd_;
 }
 
 EvController::~EvController() {
   CHECK(is_stopped_);
-  close(event_fd_);
   close(epoll_fd_);
 
   DVLOG(1) << "~EvController";
-
-  signal_state* ss = get_signal_state();
-  for (size_t i = 0; i < ABSL_ARRAYSIZE(ss->signal_map); ++i) {
-    if (ss->signal_map[i].ev_controller == this) {
-      ss->signal_map[i].ev_controller = nullptr;
-      ss->signal_map[i].cb = nullptr;
-    }
-  }
-}
-
-void EvController::Stop() {
-  AsyncBrief([this] { is_stopped_ = true; });
-  VLOG(1) << "EvController::StopFinish";
 }
 
 void EvController::Run() {
@@ -124,7 +66,7 @@ void EvController::Run() {
 
   EpollFiberAlgo* algo = new EpollFiberAlgo(this);
   sched->set_algo(algo);
-  this_fiber::properties<EpollFiberProps>().set_name("ioloop");
+  this_fiber::properties<FiberProps>().set_name("ioloop");
 
   is_stopped_ = false;
 
@@ -176,13 +118,13 @@ void EvController::Run() {
       }
     }
 
+    DVLOG(1) << "EpollWait " << timeout;
     int epoll_res = epoll_wait(epoll_fd_, cevents, kBatchSize, timeout);
     if (epoll_res < 0) {
       LOG(FATAL) << "TBD: " << errno << " " << strerror(errno);
     }
     uint32_t cqe_count = epoll_res;
     if (cqe_count) {
-      DVLOG(2) << "Fetched " << cqe_count << " cqes";
       DispatchCompletions(cevents, cqe_count);
     }
 
@@ -210,7 +152,7 @@ void EvController::Run() {
     ++spin_loops;
   }
 
-  VLOG(1) << "wakeups/stalls: " << tq_wakeups_.load() << "/" << num_stalls;
+  VLOG(1) << "wakeups/stalls: " << tq_wakeup_ev_.load() << "/" << num_stalls;
 
   VLOG(1) << "centries size: " << centries_.size();
 }
@@ -228,7 +170,7 @@ unsigned EvController::Arm(int fd, CbType cb, uint32_t event_mask) {
 
   auto& e = centries_[next_free_ce_];
   DCHECK(!e.cb);  // cb is undefined.
-  DVLOG(1) << "Arm: index: " << next_free_ce_;
+  DVLOG(1) << "Arm: " << fd << ", index: " << next_free_ce_;
 
   unsigned ret = next_free_ce_;
   next_free_ce_ = e.index;
@@ -262,25 +204,22 @@ void EvController::Init() {
   }
 
   thread_id_ = pthread_self();
-  tl_info_.is_ev_thread = true;
+  tl_info_.owner = this;
 
-  Arm(event_fd_, [ev_fd = event_fd_](uint32_t mask, auto*) {
+  auto cb = [ev_fd = wake_fd_](uint32_t mask, auto*) {
     DVLOG(1) << "EventFdCb called " << mask;
     uint64_t val;
     CHECK_EQ(8, read(ev_fd, &val, sizeof(val)));
-  }, EPOLLIN);
+  };
+  Arm(wake_fd_, std::move(cb), EPOLLIN);
 }
 
-void EvController::DoWake() {
-  DVLOG(1) << "Wake ring " << tq_seq_.load(std::memory_order_relaxed);
-
-  tq_wakeups_.fetch_add(1, std::memory_order_relaxed);
-
-  uint64_t val = 1;
-  CHECK_EQ(8, write(event_fd_, &val, sizeof(uint64_t)));
+FiberSocketBase* EvController::CreateSocket() {
+  return new FiberSocket{this};
 }
 
 void EvController::DispatchCompletions(epoll_event* cevents, unsigned count) {
+  DVLOG(2) << "DispatchCompletions " << count << " cqes";
   for (unsigned i = 0; i < count; ++i) {
     const auto& cqe = cevents[i];
 
@@ -291,7 +230,6 @@ void EvController::DispatchCompletions(epoll_event* cevents, unsigned count) {
       DCHECK_LT(index, centries_.size());
       const auto& item = centries_[index];
       DCHECK(item.cb) << index;
-
 
       item.cb(cqe.events, this);
       continue;
@@ -304,36 +242,6 @@ void EvController::DispatchCompletions(epoll_event* cevents, unsigned count) {
   }
 }
 
-void EvController::RegisterSignal(std::initializer_list<uint16_t> l, std::function<void(int)> cb) {
-  auto* state = get_signal_state();
-
-  struct sigaction sa;
-  memset(&sa, 0, sizeof(sa));
-
-  if (cb) {
-    sa.sa_flags = SA_SIGINFO;
-    sa.sa_sigaction = &SigAction;
-
-    for (uint16_t val : l) {
-      CHECK(!state->signal_map[val].cb) << "Signal " << val << " was already registered";
-      state->signal_map[val].cb = cb;
-      state->signal_map[val].ev_controller = this;
-
-      CHECK_EQ(0, sigaction(val, &sa, NULL));
-    }
-  } else {
-    sa.sa_handler = SIG_DFL;
-
-    for (uint16_t val : l) {
-      CHECK(state->signal_map[val].cb) << "Signal " << val << " was already registered";
-      state->signal_map[val].cb = nullptr;
-      state->signal_map[val].ev_controller = nullptr;
-
-      CHECK_EQ(0, sigaction(val, &sa, NULL));
-    }
-  }
-}
-
 void EvController::RegrowCentries() {
   size_t prev = centries_.size();
   VLOG(1) << "RegrowCentries from " << prev << " to " << prev * 2;
@@ -343,7 +251,6 @@ void EvController::RegrowCentries() {
   for (; prev < centries_.size() - 1; ++prev)
     centries_[prev].index = prev + 1;
 }
-
 
 }  // namespace epoll
 }  // namespace util

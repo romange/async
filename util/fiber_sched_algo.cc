@@ -19,9 +19,12 @@ using namespace std;
 FiberSchedAlgo::FiberSchedAlgo(ProactorBase* proactor) : proactor_(proactor) {
   main_cntx_ = fibers::context::active();
   CHECK(main_cntx_->is_context(fibers::type::main_context));
+  timer_fd_ = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+  CHECK_GE(timer_fd_, 0);
 }
 
 FiberSchedAlgo::~FiberSchedAlgo() {
+  close(timer_fd_);
 }
 
 void FiberSchedAlgo::awakened(FiberContext* ctx, FiberProps& props) noexcept {

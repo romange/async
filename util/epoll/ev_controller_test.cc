@@ -27,12 +27,13 @@ using base::VarzValue;
 namespace util {
 namespace epoll {
 
-
 class EvControllerTest : public testing::Test {
  protected:
   void SetUp() override {
     ev_cntrl_ = std::make_unique<EvController>();
-    ev_cntrl_thread_ = thread{[this] { ev_cntrl_->Run(); }};
+    ev_cntrl_thread_ = thread{[this] {
+      ev_cntrl_->Run();
+    }};
   }
 
   void TearDown() {
@@ -51,7 +52,7 @@ class EvControllerTest : public testing::Test {
 };
 
 TEST_F(EvControllerTest, AsyncCall) {
-  for (unsigned i = 0; i < 10000; ++i) {
+  for (unsigned i = 0; i < 1000; ++i) {
     ev_cntrl_->AsyncBrief([] {});
   }
   usleep(5000);
@@ -83,7 +84,7 @@ TEST_F(EvControllerTest, DispatchTest) {
 
   LOG(INFO) << "LaunchFiber";
   auto fb = ev_cntrl_->LaunchFiber([&] {
-    this_fiber::properties<EpollFiberProps>().set_name("jessie");
+    this_fiber::properties<FiberProps>().set_name("jessie");
 
     std::unique_lock<fibers::mutex> g(mu);
     state = 1;

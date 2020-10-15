@@ -5,8 +5,8 @@
 #include "util/proactor_base.h"
 
 #include <absl/base/attributes.h>
-#include <sys/eventfd.h>
 #include <signal.h>
+#include <sys/eventfd.h>
 
 #include "base/logging.h"
 
@@ -83,7 +83,6 @@ uint64_t ProactorBase::AddIdleTask(IdleTask f) {
   return id;
 }
 
-
 void ProactorBase::RegisterSignal(std::initializer_list<uint16_t> l, std::function<void(int)> cb) {
   auto* state = get_signal_state();
 
@@ -112,6 +111,29 @@ void ProactorBase::RegisterSignal(std::initializer_list<uint16_t> l, std::functi
       CHECK_EQ(0, sigaction(val, &sa, NULL));
     }
   }
+}
+
+// Remember, WakeRing is called from external threads.
+void ProactorBase::WakeRing() {
+  DVLOG(2) << "Wake ring " << tq_seq_.load(std::memory_order_relaxed);
+
+  tq_wakeup_ev_.fetch_add(1, std::memory_order_relaxed);
+
+  /**
+   * It's tempting to use io_uring_prep_nop() here in order to resume wait_cqe() call.
+   * However, it's not that staightforward. io_uring_get_sqe and io_uring_submit
+   * are not thread-safe and this function is called from another thread.
+   * Even though tq_seq_ == WAIT_SECTION_STATE ensured that Proactor thread
+   * is going to stall we can not guarantee that it will not wake up before we reach the next line.
+   * In that case, Proactor loop will continue and both threads could call
+   * io_uring_get_sqe and io_uring_submit at the same time. This will cause data-races.
+   * It's possible to fix this by guarding with spinlock the section below as well as
+   * the section after the wait_cqe() call but I think it's overcomplicated and not worth it.
+   * Therefore we gonna stick with event_fd descriptor to wake up Proactor thread.
+   */
+
+  uint64_t val = 1;
+  CHECK_EQ(8, write(wake_fd_, &val, sizeof(uint64_t)));
 }
 
 }  // namespace util
