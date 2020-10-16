@@ -19,7 +19,7 @@
 #include "util/uring/fiber_socket.h"
 #include "util/uring/uring_fiber_algo.h"
 
-DEFINE_bool(proactor_register_fd, false, "If true tries to register file destricptors");
+DEFINE_bool(proactor_register_fd, false, "If true tries to register file descriptors");
 
 #define URING_CHECK(x)                                                           \
   do {                                                                           \
@@ -109,6 +109,7 @@ Proactor::~Proactor() {
 
 void Proactor::Run() {
   VLOG(1) << "Proactor::Run";
+  CHECK(tl_info_.owner) << "Init was not called";
 
   main_loop_ctx_ = fibers::context::active();
   fibers::scheduler* sched = main_loop_ctx_->get_scheduler();

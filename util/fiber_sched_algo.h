@@ -60,6 +60,10 @@ class FiberSchedAlgo : public ::boost::fibers::algo::algorithm_with_properties<F
  protected:
   virtual void SuspendWithTimer(const time_point& tp) noexcept = 0;
 
+  bool MainHasSwitched() const {
+    return (mask_ & (MAIN_LOOP_SUSPEND | MAIN_YIELDED)) == (MAIN_LOOP_SUSPEND | MAIN_YIELDED);
+  }
+
   ProactorBase* proactor_;
 
   ready_queue_type rqueue_;
@@ -68,7 +72,7 @@ class FiberSchedAlgo : public ::boost::fibers::algo::algorithm_with_properties<F
   uint32_t ready_cnt_ = 0;
   int timer_fd_ = -1;
 
-  enum : uint8_t { MAIN_LOOP_SUSPEND = 1 };
+  enum : uint8_t { MAIN_LOOP_SUSPEND = 1, MAIN_YIELDED = 2, MAIN_WAKENED = 4 };
   uint8_t mask_ = 0;
 };
 

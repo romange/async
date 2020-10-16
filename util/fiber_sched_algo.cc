@@ -39,7 +39,8 @@ void FiberSchedAlgo::awakened(FiberContext* ctx, FiberProps& props) noexcept {
 
     uint64_t now = absl::GetCurrentTimeNanos();
     props.awaken_ts_ = now;
-    if (ctx != main_cntx_ && (mask_ & MAIN_LOOP_SUSPEND) && !main_cntx_->ready_is_linked()) {
+
+    if (ctx != main_cntx_ && MainHasSwitched() && !main_cntx_->ready_is_linked()) {
       uint64_t delta = (now - suspend_main_ts_) / 1000;
       if (delta > 1000) { // 1ms
         DVLOG(2) << "Preemptively awakened io_loop after " << delta << " usec";
@@ -47,6 +48,8 @@ void FiberSchedAlgo::awakened(FiberContext* ctx, FiberProps& props) noexcept {
         main_cntx_->ready_link(rqueue_);
         FiberProps* main_props = static_cast<FiberProps*>(main_cntx_->get_properties());
         main_props->awaken_ts_ = now;
+        mask_ &= ~MAIN_YIELDED;
+        mask_ |= MAIN_WAKENED;
       }
     }
   }
@@ -60,9 +63,22 @@ auto FiberSchedAlgo::pick_next() noexcept -> FiberContext* {
   if (rqueue_.empty())
     return nullptr;
 
-  FiberContext* ctx = &rqueue_.front();
-  rqueue_.pop_front();
+  FiberContext* ctx;
 
+  // simplest 2-level priority queue.
+  // choose main context first
+  if ((mask_ & MAIN_WAKENED) && main_cntx_->ready_is_linked()) {
+    ctx = main_cntx_;
+    ctx->ready_unlink();
+
+    mask_ &= ~MAIN_WAKENED;
+  } else {
+    ctx = &rqueue_.front();
+    rqueue_.pop_front();
+    if (mask_ & MAIN_LOOP_SUSPEND) {
+      mask_ |= MAIN_YIELDED;
+    }
+  }
   if (!ctx->is_context(boost::fibers::type::dispatcher_context)) {
     --ready_cnt_;
     FiberProps* props = (FiberProps*)ctx->get_properties();
@@ -145,7 +161,7 @@ void FiberSchedAlgo::SuspendMain(uint64_t now) {
   suspend_main_ts_ = now;
 
   main_cntx_->suspend();
-  mask_ &= ~MAIN_LOOP_SUSPEND;
+  mask_ &= ~(MAIN_LOOP_SUSPEND | MAIN_YIELDED | MAIN_WAKENED);
 
   DVLOG(2) << "WaitTillFibersSuspend:End";
 }

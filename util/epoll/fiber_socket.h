@@ -4,12 +4,6 @@
 
 #pragma once
 
-// for tcp::endpoint. Consider introducing our own.
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/fiber/context.hpp>
-
-#include "absl/base/attributes.h"
 #include "util/fiber_socket_base.h"
 #include "util/epoll/ev_controller.h"
 

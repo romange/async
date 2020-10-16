@@ -12,11 +12,11 @@
 #include "absl/time/clock.h"
 #include "base/gtest.h"
 #include "base/logging.h"
-#include "util/fibers/fibers_ext.h"
 #include "util/accept_server.h"
-#include "util/uring/uring_pool.h"
+#include "util/fibers/fibers_ext.h"
 #include "util/sliding_counter.h"
 #include "util/uring/uring_fiber_algo.h"
+#include "util/uring/uring_pool.h"
 #include "util/varz.h"
 
 using namespace boost;
@@ -257,7 +257,10 @@ TEST_F(ProactorTest, Varz) {
 
 void BM_AsyncCall(benchmark::State& state) {
   Proactor proactor;
-  std::thread t([&] { proactor.Run(); });
+  std::thread t([&] {
+    proactor.Init(128);
+    proactor.Run();
+  });
 
   while (state.KeepRunning()) {
     proactor.AsyncBrief([] {});
@@ -269,7 +272,10 @@ BENCHMARK(BM_AsyncCall);
 
 void BM_AwaitCall(benchmark::State& state) {
   Proactor proactor;
-  std::thread t([&] { proactor.Run(); });
+  std::thread t([&] {
+    proactor.Init(128);
+    proactor.Run();
+  });
 
   while (state.KeepRunning()) {
     proactor.AwaitBrief([] {});
