@@ -42,16 +42,14 @@ endif()
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
 #  -fsanitize=address has a bug with clang: multiple definition of `operator delete(void*)
 # -fsanitize=undefined has a bug with clang too (segfaults in gpertools)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcolor-diagnostics -Wno-inconsistent-missing-override")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-local-typedef")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcolor-diagnostics -Wno-inconsistent-missing-override -Wno-unused-local-typedef")
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=undefined -fsanitize=address")
 endif()
 
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fdiagnostics-color=auto")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fdiagnostics-color=always")
-
-  # asan interferes with mimalloc. See https://github.com/microsoft/mimalloc/issues/317
-  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=undefined \
+  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address -fsanitize=undefined \
   -fno-sanitize=vptr -DUNDEFINED_BEHAVIOR_SANITIZER")
 
   # If we use "noexcept" we must use -Wno-noexcept-type in c++14 because of the weird warning of gcc.

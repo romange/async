@@ -50,7 +50,6 @@ class AcceptServer {
   fibers_ext::BlockingCounter ref_bc_;  // to synchronize listener threads during the shutdown.
 
   bool was_run_ = false;
-  bool break_ = false;
 
   uint16_t backlog_ = 128;
 };

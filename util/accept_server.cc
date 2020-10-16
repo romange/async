@@ -20,7 +20,7 @@ using namespace boost;
 using namespace std;
 
 AcceptServer::AcceptServer(ProactorPool* pool, bool break_on_int)
-    : pool_(pool), ref_bc_(0), break_(break_on_int) {
+    : pool_(pool), ref_bc_(0) {
   if (break_on_int) {
     ProactorBase* proactor = pool_->GetNextProactor();
     proactor->RegisterSignal({SIGINT, SIGTERM}, [this](int signal) {

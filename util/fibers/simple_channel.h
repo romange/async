@@ -131,7 +131,7 @@ template <typename T, typename Q> void SimpleChannel<T, Q>::StartClosing() {
 
 namespace detail {
 
-template <typename T> struct QueueTraits<folly::ProducerConsumerQueue<T>> {
+template <typename T> class QueueTraits<folly::ProducerConsumerQueue<T>> {
   using Queue = folly::ProducerConsumerQueue<T>;
 
  public:
@@ -144,7 +144,7 @@ template <typename T> struct QueueTraits<folly::ProducerConsumerQueue<T>> {
   }
 };
 
-template <typename T> struct QueueTraits<base::mpmc_bounded_queue<T>> {
+template <typename T> class QueueTraits<base::mpmc_bounded_queue<T>> {
   using Queue = base::mpmc_bounded_queue<T>;
 
  public:

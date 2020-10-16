@@ -245,12 +245,20 @@ add_third_party(
 )
 
 set(MIMALLOC_INCLUDE_DIR ${THIRD_PARTY_LIB_DIR}/mimalloc/include)
+
+# asan interferes with mimalloc. See https://github.com/microsoft/mimalloc/issues/317
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(MI_OVERRIDE OFF)
+else()
+  set(MI_OVERRIDE ON)
+endif()
 add_third_party(mimalloc
   GIT_REPOSITORY https://github.com/microsoft/mimalloc
   GIT_TAG v1.6.7
 
-  # Add -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS=-O0 to debug
-  CMAKE_PASS_FLAGS "-DMI_BUILD_SHARED=OFF -DMI_BUILD_TESTS=OFF -DMI_OVERRIDE=ON -DCMAKE_C_FLAGS=-g"
+  # Add -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS=-O0 to debug -DMI_SECURE=ON
+  CMAKE_PASS_FLAGS "-DCMAKE_BUILD_TYPE=Release -DMI_BUILD_SHARED=OFF -DMI_BUILD_TESTS=OFF \
+                    -DMI_OVERRIDE=${MI_OVERRIDE} -DCMAKE_C_FLAGS=-g"
 
   BUILD_COMMAND make -j4 mimalloc-static
   INSTALL_COMMAND make install
