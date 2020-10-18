@@ -114,8 +114,8 @@ void Proactor::Run() {
   main_loop_ctx_ = fibers::context::active();
   fibers::scheduler* sched = main_loop_ctx_->get_scheduler();
 
-  UringFiberAlgo* scheduler = new UringFiberAlgo(this);
-  sched->set_algo(scheduler);
+  scheduler_ = new UringFiberAlgo(this);
+  sched->set_algo(scheduler_);
   this_fiber::properties<FiberProps>().set_name("ioloop");
 
   is_stopped_ = false;
@@ -178,8 +178,15 @@ void Proactor::Run() {
       sqe_avail_.notifyAll();
     }
 
-    if (tq_seq & 1) {  // We allow dispatch fiber to run.
+    // Check if we are notified by FiberSchedAlgo::notify().
+    if (tq_seq & 1) {
+      // We allow dispatch fiber to run.
+
+      // We must reset LSB for both tq_seq and tq_seq_  so that if notify() was called after yield(),
+      // tq_seq_ would be invalidated.
+
       tq_seq_.fetch_and(~1, std::memory_order_relaxed);
+      tq_seq &= ~1;
       this_fiber::yield();
     }
 
@@ -190,7 +197,7 @@ void Proactor::Run() {
       DVLOG(2) << "Suspend ioloop";
       uint64_t now = GetClockNanos();
       tl_info_.monotonic_time = now;
-      scheduler->SuspendMain(now);
+      scheduler_->SuspendMain(now);
 
       DVLOG(2) << "Resume ioloop";
 
@@ -227,7 +234,8 @@ void Proactor::Run() {
     }
 
     spin_loops = 0;  // Reset the spinning.
-    // pthread_yield();
+
+    DCHECK_EQ(0U, tq_seq & 1) << tq_seq;
 
     /**
      * If tq_seq_ has changed since it was cached into tq_seq, then

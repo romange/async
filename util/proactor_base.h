@@ -170,6 +170,8 @@ class ProactorBase {
   EventCount task_queue_avail_;
 
   uint64_t next_idle_task_{1};
+  FiberSchedAlgo* scheduler_ = nullptr;
+
   absl::flat_hash_map<uint64_t, IdleTask> idle_map_;
   absl::flat_hash_map<uint64_t, IdleTask>::const_iterator idle_it_;
 
