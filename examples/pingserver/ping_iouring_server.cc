@@ -5,12 +5,12 @@
 #include "base/init.h"
 #include "examples/pingserver/ping_command.h"
 
-#include "util/uring/varz.h"
-#include "util/uring/accept_server.h"
+#include "util/varz.h"
+#include "util/accept_server.h"
 #include "util/uring/fiber_socket.h"
-#include "util/uring/proactor_pool.h"
+#include "util/uring/uring_pool.h"
 #include "util/uring/uring_fiber_algo.h"
-#include "util/uring/http_handler.h"
+#include "util/http_handler.h"
 #include "util/asio_stream_adapter.h"
 
 
@@ -18,7 +18,7 @@ using namespace boost;
 using namespace util;
 using uring::FiberSocket;
 using uring::Proactor;
-using uring::ProactorPool;
+using uring::UringPool;
 using uring::SubmitEntry;
 
 using IoResult = Proactor::IoResult;
@@ -27,9 +27,9 @@ DEFINE_int32(http_port, 8080, "Http port.");
 DEFINE_int32(port, 6380, "Redis port");
 DEFINE_uint32(queue_depth, 256, "");
 
-uring::VarzQps ping_qps("ping-qps");
+VarzQps ping_qps("ping-qps");
 
-class PingConnection : public uring::Connection {
+class PingConnection : public Connection {
  public:
   PingConnection() {}
 
@@ -47,7 +47,7 @@ class PingConnection : public uring::Connection {
 void PingConnection::HandleRequests() {
   system::error_code ec;
 
-  AsioStreamAdapter<FiberSocket> asa(socket_);
+  AsioStreamAdapter<FiberSocketBase> asa(*socket_);
   while (true) {
     size_t res = asa.read_some(cmd_.read_buffer(), ec);
     if (FiberSocket::IsConnClosed(ec))
@@ -64,12 +64,12 @@ void PingConnection::HandleRequests() {
       }
     }
   }
-  socket_.Shutdown(SHUT_RDWR);
+  socket_->Shutdown(SHUT_RDWR);
 }
 
-class PingListener : public uring::ListenerInterface {
+class PingListener : public ListenerInterface {
  public:
-  virtual uring::Connection* NewConnection(Proactor* context) {
+  virtual Connection* NewConnection(ProactorBase* context) final {
     return new PingConnection;
   }
 };
@@ -79,15 +79,15 @@ int main(int argc, char* argv[]) {
 
   CHECK_GT(FLAGS_port, 0);
 
-  ProactorPool pp;
+  UringPool pp;
   pp.Run();
   ping_qps.Init(&pp);
 
-  uring::AcceptServer uring_acceptor(&pp);
+  AcceptServer uring_acceptor(&pp);
   uring_acceptor.AddListener(FLAGS_port, new PingListener);
   if (FLAGS_http_port >= 0) {
 
-    uint16_t port = uring_acceptor.AddListener(FLAGS_http_port, new uring::HttpListener<>);
+    uint16_t port = uring_acceptor.AddListener(FLAGS_http_port, new HttpListener<>);
     LOG(INFO) << "Started http server on port " << port;
   }
 
