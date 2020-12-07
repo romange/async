@@ -24,6 +24,8 @@ class FiberSocket : public FiberSocketBase {
   ABSL_MUST_USE_RESULT error_code Connect(const endpoint_type& ep) final;
   ABSL_MUST_USE_RESULT error_code Close() final;
 
+  using FiberSocketBase::Send;
+  
   // Really need here expected.
   expected_size_t Send(const iovec* ptr, size_t len) override;
 

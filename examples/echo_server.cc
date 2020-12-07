@@ -27,17 +27,17 @@ using namespace std;
 using namespace util;
 using uring::FiberSocket;
 using uring::Proactor;
-using uring::UringPool;
 using uring::SubmitEntry;
+using uring::UringPool;
 using tcp = asio::ip::tcp;
 
 using IoResult = Proactor::IoResult;
 
 DEFINE_int32(http_port, 8080, "Http port.");
-DEFINE_int32(port, 8081, "Redis port");
+DEFINE_int32(port, 8081, "Echo server port");
 DEFINE_uint32(n, 1000, "Number of requests per connection");
 DEFINE_uint32(c, 10, "Number of connections per thread");
-DEFINE_uint32(size, 0, "Message size, 0 for hardcoded 4 byte pings");
+DEFINE_uint32(size, 1, "Message size, 0 for hardcoded 4 byte pings");
 DEFINE_string(connect, "", "hostname or ip address to connect to in client mode");
 
 VarzQps ping_qps("ping-qps");
@@ -45,7 +45,6 @@ VarzQps ping_qps("ping-qps");
 class EchoConnection : public Connection {
  public:
   EchoConnection() {
-    work_buf_.reset(new uint8_t[1 << 16]);
   }
 
  private:
@@ -53,23 +52,17 @@ class EchoConnection : public Connection {
   system::error_code ReadMsg(size_t* sz);
 
   std::unique_ptr<uint8_t[]> work_buf_;
+  size_t req_len_ = 0;
 };
 
 system::error_code EchoConnection::ReadMsg(size_t* sz) {
   system::error_code ec;
   AsioStreamAdapter<FiberSocketBase> asa(*socket_);
 
-  uint8_t buf[4];
-  size_t buf_sz = asio::read(asa, asio::buffer(buf), ec);
-  if (ec)
-    return ec;
-  CHECK_EQ(buf_sz, 4u);
-  buf_sz = absl::little_endian::Load32(buf);
-  CHECK_LT(buf_sz, 1u << 16);
-  size_t bs = asio::read(asa, asio::buffer(work_buf_.get(), buf_sz), ec);
-  CHECK(ec || bs == buf_sz);
+  size_t bs = asio::read(asa, asio::buffer(work_buf_.get(), req_len_), ec);
+  CHECK(ec || bs == req_len_);
 
-  *sz = buf_sz;
+  *sz = bs;
   return ec;
 }
 
@@ -79,93 +72,28 @@ void EchoConnection::HandleRequests() {
   iovec vec[2];
   uint8_t buf[8];
 
-  if (FLAGS_size <= 0) {
+  AsioStreamAdapter<FiberSocketBase> asa(*socket_);
+  size_t bs = asio::read(asa, asio::buffer(buf), ec);
+  CHECK(!ec && bs == sizeof(buf));
+  req_len_ = absl::little_endian::Load64(buf);
+
+  CHECK_LE(req_len_, 1UL << 18);
+  work_buf_.reset(new uint8_t[req_len_]);
+  
+  while (true) {
+    ec = ReadMsg(&sz);
+    if (FiberSocket::IsConnClosed(ec))
+      break;
+    CHECK(!ec) << ec;
+    ping_qps.Inc();
+
     vec[0].iov_base = buf;
-    vec[0].iov_len = 8;
-    uint64 num_req = 0;
-
-    msghdr msg;
-
-    while (true) {
-      memset(&msg, 0, sizeof(msg));
-      msg.msg_iov = vec;
-      msg.msg_iovlen = 1;
-
-// msg_control is not supported in io_uring until 5.10 at least.
-#if 0
-    const int CMSG_SIZE = 1024;
-    char cmsg_buf[CMSG_SIZE];
-    int so_opt = SOF_TIMESTAMPING_RX_SOFTWARE | SOF_TIMESTAMPING_SOFTWARE;
-
-       msg.msg_control = cmsg_buf;
-       msg.msg_controllen = sizeof(cmsg_buf);
-
-      // setsockopt SO_TIMESTAMPING must be done before each recvmsg call - it's per recv request.
-      // Its seems we need usleep as well though it's super weird and looks like a hack.
-      CHECK_EQ(0, setsockopt (socket_.RealFd(), SOL_SOCKET, SO_TIMESTAMPING, &so_opt, sizeof(so_opt)))
-       << strerror(errno);
-      // usleep(20000); /* setsockopt for SO_TIMESTAMPING is asynchronous */
-
-      auto res1 = recvmsg(socket_.RealFd(), &msg, 0);
-      CHECK_EQ(res1, 8) << errno;
-#endif
-      auto res1 = socket_->RecvMsg(msg, 0);
-      if (!res1.has_value()) {
-        if (!FiberSocket::IsConnClosed(res1.error())) {
-          LOG(WARNING) << "Broke on " << res1.error();
-        }
-        break;
-      }
-      CHECK_EQ(8u, res1.value());
-
-      int64_t recv_now = absl::GetCurrentTimeNanos();
-
-      for (cmsghdr* cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-        CHECK_EQ(cmsg->cmsg_level, SOL_SOCKET);
-        CHECK_EQ(cmsg->cmsg_type, SCM_TIMESTAMPING);
-        struct scm_timestamping* ts = (struct scm_timestamping*)CMSG_DATA(cmsg);
-        CHECK(ts);
-        VLOG(1) << "[" << num_req << "] " << ts->ts[0].tv_sec << " " << ts->ts[1].tv_sec << " "
-                << ts->ts[2].tv_sec;
-      }
-      int64_t sender_ts = absl::little_endian::Load64(buf);
-
-      absl::little_endian::Store64(buf, recv_now);
-      auto res = socket_->Send(asio::buffer(buf, 8));
-      if (res.has_value()) {
-        CHECK_EQ(8u, res.value());
-      } else {
-        if (!FiberSocket::IsConnClosed(res.error())) {
-          LOG(INFO) << "Broke on " << res.error();
-        }
-        break;
-      }
-      ping_qps.Inc();
-
-      if (++num_req > 10) {
-        int64_t recv_delay_usec = (recv_now - sender_ts) / 1000;
-        int64_t send_del_usec = (absl::GetCurrentTimeNanos() - recv_now) / 1000;
-        if (recv_delay_usec >= 10000 || send_del_usec > 5000) {
-          LOG(INFO) << "Recv delay: " << recv_delay_usec << ", send delay " << send_del_usec;
-        }
-      }
-    }
-  } else {
-    while (true) {
-      ec = ReadMsg(&sz);
-      if (FiberSocket::IsConnClosed(ec))
-        break;
-      CHECK(!ec) << ec;
-      ping_qps.Inc();
-
-      vec[0].iov_base = buf;
-      vec[0].iov_len = 4;
-      absl::little_endian::Store32(buf, sz);
-      vec[1].iov_base = work_buf_.get();
-      vec[1].iov_len = sz;
-      auto res = socket_->Send(vec, 2);
-      CHECK(res.has_value());
-    }
+    vec[0].iov_len = 4;
+    absl::little_endian::Store32(buf, sz);
+    vec[1].iov_base = work_buf_.get();
+    vec[1].iov_len = sz;
+    auto res = socket_->Send(vec, 2);
+    CHECK(res.has_value());
   }
 }
 
@@ -201,80 +129,43 @@ class Driver {
   void Run(base::Histogram* dest);
 
  private:
-  void SendRcvPing(Proactor* p);
-  msghdr msg_;
+  
   uint8_t buf_[8];
-  iovec vec_[2];
 };
 
 Driver::Driver(const tcp::endpoint& ep, Proactor* p) : socket_(p) {
   auto ec = socket_.Connect(ep);
   CHECK(!ec) << ec;
   VLOG(1) << "Connected to " << socket_.RemoteEndpoint();
-  memset(&msg_, 0, sizeof(msg_));
-  msg_.msg_iov = vec_;
-  msg_.msg_iovlen = 1;
-  vec_[0].iov_base = buf_;
-  vec_[0].iov_len = 8;
-}
-
-void Driver::SendRcvPing(Proactor* p) {
-  uring::SubmitEntry se1 = p->GetSubmitEntry(nullptr, 0);
-  se1.PrepSendMsg(socket_.native_handle(), &msg_, 0);
-  se1.sqe()->flags |= IOSQE_IO_LINK;
-  auto res = socket_.Recv(asio::buffer(buf_, 8));
-  CHECK(res.has_value());
-  CHECK_EQ(8u, res.value());
 }
 
 void Driver::Run(base::Histogram* dest) {
-  vec_[0].iov_base = buf_;
-  vec_[0].iov_len = 8;
   base::Histogram hist;
 
-  if (FLAGS_size <= 0) {
-    Proactor* p = static_cast<Proactor*>(socket_.proactor());
-    // Warmup
-    for (unsigned i = 0; i < 10; ++i) {
-      uint64_t start = absl::GetCurrentTimeNanos();
-      absl::little_endian::Store64(buf_, start);
-      SendRcvPing(p);
-    }
+  absl::little_endian::Store64(buf_, FLAGS_size);
+  std::unique_ptr<uint8_t[]> msg(new uint8_t[FLAGS_size]);
 
-    for (unsigned i = 0; i < FLAGS_n; ++i) {
-      uint64_t start = absl::GetCurrentTimeNanos();
-      absl::little_endian::Store64(buf_, start);
+  uring::FiberSocket::expected_size_t es = socket_.Send(asio::buffer(buf_));
+  CHECK_EQ(8U, es.value_or(0));  // Send expected payload size.
 
-      SendRcvPing(p);
-      uint64_t now = absl::GetCurrentTimeNanos();
-      uint64_t dur_usec = (now - start) / 1000;
-      uint64_t srv_snd = absl::little_endian::Load64(buf_);
-      hist.Add(dur_usec);
-      if (dur_usec > 20000) {  // 20ms
-        LOG(INFO) << "RTT " << dur_usec << ", recv delay " << (now - srv_snd) / 1000;
-      }
-    }
-  } else {
-    absl::little_endian::Store32(buf_, FLAGS_size);
-    std::unique_ptr<uint8_t[]> msg(new uint8_t[FLAGS_size]);
+  iovec vec[2];
+  vec[0].iov_len = 4;
+  vec[0].iov_base = buf_;
+  vec[1].iov_len = FLAGS_size;
+  vec[1].iov_base = msg.get();
+  
+  for (unsigned i = 0; i < FLAGS_n; ++i) {
+    auto start = absl::GetCurrentTimeNanos();
+    es = socket_.Send(asio::buffer(msg.get(), FLAGS_size));
+    CHECK(es.has_value()) << es.error();
+    CHECK_EQ(es.value(), FLAGS_size);
 
-    vec_[0].iov_len = 4;
-    vec_[1].iov_base = msg.get();
-    vec_[1].iov_len = FLAGS_size;
+    auto res2 = socket_.Recv(vec, 2);
+    CHECK(res2.has_value()) << res2.error();
+    CHECK_EQ(res2.value(), size_t(FLAGS_size + 4));
 
-    for (unsigned i = 0; i < FLAGS_n; ++i) {
-      auto start = absl::GetCurrentTimeNanos();
-      auto res = socket_.Send(vec_, 2);
-      CHECK(res.has_value()) << res.error();
-      CHECK_EQ(res.value(), size_t(FLAGS_size + 4));
-
-      auto res2 = socket_.Recv(vec_, 2);
-      CHECK(res.has_value()) << res.error();
-      CHECK_EQ(res2.value(), size_t(FLAGS_size + 4));
-
-      uint64_t dur = absl::GetCurrentTimeNanos() - start;
-      hist.Add(dur / 1000);
-    }
+    uint64_t dur = absl::GetCurrentTimeNanos() - start;
+    hist.Add(dur / 1000);
   }
   socket_.Shutdown(SHUT_RDWR);
   dest->Merge(hist);
@@ -311,6 +202,8 @@ int main(int argc, char* argv[]) {
   if (FLAGS_connect.empty()) {
     RunServer(&pp);
   } else {
+    CHECK_GT(FLAGS_size, 0U);
+
     asio::io_context io_context;
     tcp::resolver resolver{io_context};
     system::error_code ec;
