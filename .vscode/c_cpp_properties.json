@@ -22,7 +22,8 @@
                 "${workspaceFolder}/build-opt/_deps/glog-build",
                 "${workspaceFolder}/build-opt/_deps/benchmark-src/include",
                 "${default}"
-            ]
+            ],
+            "configurationProvider": "ms-vscode.cmake-tools"
         }
     ],
     "version": 4

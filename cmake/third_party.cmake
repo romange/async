@@ -150,7 +150,7 @@ FetchContent_Declare(
   glog
   GIT_REPOSITORY https://github.com/romange/glog.git
   GIT_TAG Prod
-  PATCH_COMMAND patch -p1 < "${CMAKE_CURRENT_LIST_DIR}/../patches/glog-v0.4.0.patch"
+
   GIT_PROGRESS    TRUE
   GIT_SHALLOW     TRUE
 )
@@ -163,13 +163,13 @@ if (NOT glog_POPULATED)
   # Also there is something fishy with pthread_rw_lock on aarch64 - glog sproadically fails
   # inside pthreads code.
   if (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
-    set(WITH_UNWIND OFF)
-    set(HAVE_RWLOCK OFF)
+    set(WITH_UNWIND OFF  CACHE BOOL "")
+    set(HAVE_RWLOCK OFF  CACHE BOOL "")
   endif()
 
     # We trick glog into compiling with gflags.
-    set(HAVE_LIB_GFLAGS 1)
-    set(WITH_GFLAGS OFF)
+    set(HAVE_LIB_GFLAGS ON CACHE BOOL "")
+    set(WITH_GFLAGS OFF CACHE BOOL "")
     add_subdirectory(${glog_SOURCE_DIR} ${glog_BINARY_DIR})
 
     set_property(TARGET glog APPEND PROPERTY
