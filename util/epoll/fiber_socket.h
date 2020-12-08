@@ -13,8 +13,7 @@ namespace epoll {
 class FiberSocket : public FiberSocketBase {
  public:
 
-  FiberSocket(EvController* ev) : FiberSocketBase(-1, ev) {
-  }
+  FiberSocket();
 
   virtual ~FiberSocket();
 

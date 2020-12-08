@@ -29,7 +29,7 @@ class EvController : public ProactorBase {
 
   unsigned Arm(int fd, CbType cb, uint32_t event_mask);
   void UpdateCb(unsigned arm_index, CbType cb);
-  void Disarm(unsigned arm_index);
+  void Disarm(int fd, unsigned arm_index);
 
   int ev_loop_fd() const {
     return epoll_fd_;

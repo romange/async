@@ -118,11 +118,15 @@ void EvController::Run() {
       }
     }
 
-    DVLOG(1) << "EpollWait " << timeout;
+    DVLOG(2) << "EpollWait " << timeout;
     int epoll_res = epoll_wait(epoll_fd_, cevents, kBatchSize, timeout);
     if (epoll_res < 0) {
+      epoll_res = errno;
+      if (epoll_res == EINTR)
+        continue;
       LOG(FATAL) << "TBD: " << errno << " " << strerror(errno);
     }
+
     uint32_t cqe_count = epoll_res;
     if (cqe_count) {
       DispatchCompletions(cevents, cqe_count);
@@ -187,12 +191,15 @@ void EvController::UpdateCb(unsigned arm_index, CbType cb) {
   centries_[arm_index].cb = cb;
 }
 
-void EvController::Disarm(unsigned arm_index) {
+void EvController::Disarm(int fd, unsigned arm_index) {
+  DVLOG(1) << "Disarming " << fd << " on " << arm_index;
   CHECK_LT(arm_index, centries_.size());
+
   centries_[arm_index].cb = nullptr;
   centries_[arm_index].index = next_free_ce_;
 
   next_free_ce_ = arm_index;
+  CHECK_EQ(0, epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, NULL));
 }
 
 void EvController::Init() {
@@ -216,7 +223,10 @@ void EvController::Init() {
 }
 
 FiberSocketBase* EvController::CreateSocket() {
-  return new FiberSocket{this};
+  FiberSocket* res = new FiberSocket;
+  res->SetProactor(this);
+
+  return res;
 }
 
 void EvController::DispatchCompletions(epoll_event* cevents, unsigned count) {
@@ -226,13 +236,15 @@ void EvController::DispatchCompletions(epoll_event* cevents, unsigned count) {
 
     // I allocate range of 1024 reserved values for the internal EvController use.
     uint32_t user_data = cqe.data.u32;
+
     if (cqe.data.u32 >= kUserDataCbIndex) {  // our heap range surely starts higher than 1k.
       size_t index = user_data - kUserDataCbIndex;
       DCHECK_LT(index, centries_.size());
       const auto& item = centries_[index];
-      DCHECK(item.cb) << index;
 
-      item.cb(cqe.events, this);
+      if (item.cb) {  // We could disarm an event and get this completion afterwards.
+        item.cb(cqe.events, this);
+      }
       continue;
     }
 

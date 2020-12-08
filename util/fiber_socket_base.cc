@@ -90,6 +90,8 @@ auto FiberSocketBase::Listen(unsigned port, unsigned backlog, uint32_t sock_opts
   VSOCK(1) << "Listening";
 
   posix_err_wrap(listen(fd_, backlog), &ec);
+
+  OnSetProactor();
   return ec;
 }
 

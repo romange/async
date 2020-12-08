@@ -28,7 +28,7 @@ EpollFiberAlgo::EpollFiberAlgo(ProactorBase* ev_cntr) : FiberSchedAlgo(ev_cntr) 
 }
 
 EpollFiberAlgo::~EpollFiberAlgo() {
-  static_cast<EvController*>(proactor_)->Disarm(arm_index_);
+  static_cast<EvController*>(proactor_)->Disarm(timer_fd_, arm_index_);
 }
 
 void EpollFiberAlgo::SuspendWithTimer(const time_point& abs_time) noexcept {

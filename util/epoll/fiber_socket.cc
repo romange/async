@@ -21,7 +21,6 @@ using namespace boost;
 
 namespace {
 
-
 inline FiberSocket::error_code from_errno() {
   return FiberSocket::error_code(errno, std::system_category());
 }
@@ -37,12 +36,14 @@ inline ssize_t posix_err_wrap(ssize_t res, FiberSocket::error_code* ec) {
 
 }  // namespace
 
+FiberSocket::FiberSocket() : FiberSocketBase(-1, nullptr) {
+}
+
 FiberSocket::~FiberSocket() {
   error_code ec = Close();  // Quietly close.
 
   LOG_IF(WARNING, ec) << "Error closing socket " << ec << "/" << ec.message();
 }
-
 
 auto FiberSocket::Close() -> error_code {
   error_code ec;
@@ -50,16 +51,17 @@ auto FiberSocket::Close() -> error_code {
     DVSOCK(1) << "Closing socket";
 
     int fd = native_handle();
-    GetEv()->Disarm(arm_index_);
+    GetEv()->Disarm(fd, arm_index_);
     posix_err_wrap(::close(fd), &ec);
     fd_ = -1;
   }
   return ec;
 }
 
-
 void FiberSocket::OnSetProactor() {
   if (fd_ >= 0) {
+    CHECK_LT(arm_index_, 0);
+
     auto cb = [this](uint32 mask, EvController* cntr) { Wakey(mask, cntr); };
 
     arm_index_ = GetEv()->Arm(native_handle(), std::move(cb), EPOLLIN);
@@ -80,7 +82,7 @@ auto FiberSocket::Accept() -> accept_result {
     int res =
         accept4(real_fd, (struct sockaddr*)&client_addr, &addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
     if (res >= 0) {
-      FiberSocket* fs = new FiberSocket{nullptr};
+      FiberSocket* fs = new FiberSocket;
       fs->fd_ = res;
       current_context_ = nullptr;
       return fs;
@@ -109,8 +111,7 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
   if (posix_err_wrap(fd_, &ec) < 0)
     return ec;
 
-  auto cb = [this](uint32 mask, EvController* cntr) { Wakey(mask, cntr); };
-  arm_index_ = GetEv()->Arm(fd_, std::move(cb), EPOLLIN);
+  OnSetProactor();
   current_context_ = fibers::context::active();
 
   while (true) {

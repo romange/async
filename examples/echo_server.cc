@@ -19,6 +19,8 @@
 #include "util/uring/fiber_socket.h"
 #include "util/http_handler.h"
 #include "util/uring/uring_pool.h"
+#include "util/epoll/ev_pool.h"
+
 #include "util/uring/uring_fiber_algo.h"
 #include "util/varz.h"
 
@@ -33,6 +35,7 @@ using tcp = asio::ip::tcp;
 
 using IoResult = Proactor::IoResult;
 
+DEFINE_bool(epoll, false, "If true use epoll for server");
 DEFINE_int32(http_port, 8080, "Http port.");
 DEFINE_int32(port, 8081, "Echo server port");
 DEFINE_uint32(n, 1000, "Number of requests per connection");
@@ -79,7 +82,7 @@ void EchoConnection::HandleRequests() {
 
   CHECK_LE(req_len_, 1UL << 18);
   work_buf_.reset(new uint8_t[req_len_]);
-  
+
   while (true) {
     ec = ReadMsg(&sz);
     if (FiberSocket::IsConnClosed(ec))
@@ -107,15 +110,15 @@ class EchoListener : public ListenerInterface {
 void RunServer(ProactorPool* pp) {
   ping_qps.Init(pp);
 
-  AcceptServer uring_acceptor(pp);
-  uring_acceptor.AddListener(FLAGS_port, new EchoListener);
+  AcceptServer acceptor(pp);
+  acceptor.AddListener(FLAGS_port, new EchoListener);
   if (FLAGS_http_port >= 0) {
-    uint16_t port = uring_acceptor.AddListener(FLAGS_http_port, new HttpListener<>);
+    uint16_t port = acceptor.AddListener(FLAGS_http_port, new HttpListener<>);
     LOG(INFO) << "Started http server on port " << port;
   }
 
-  uring_acceptor.Run();
-  uring_acceptor.Wait();
+  acceptor.Run();
+  acceptor.Wait();
 }
 
 class Driver {
@@ -129,7 +132,7 @@ class Driver {
   void Run(base::Histogram* dest);
 
  private:
-  
+
   uint8_t buf_[8];
 };
 
@@ -153,7 +156,7 @@ void Driver::Run(base::Histogram* dest) {
   vec[0].iov_base = buf_;
   vec[1].iov_len = FLAGS_size;
   vec[1].iov_base = msg.get();
-  
+
   for (unsigned i = 0; i < FLAGS_n; ++i) {
     auto start = absl::GetCurrentTimeNanos();
     es = socket_.Send(asio::buffer(msg.get(), FLAGS_size));
@@ -196,14 +199,23 @@ int main(int argc, char* argv[]) {
 
   CHECK_GT(FLAGS_port, 0);
 
-  UringPool pp;
-  pp.Run();
+  std::unique_ptr<ProactorPool> pp;
 
   if (FLAGS_connect.empty()) {
-    RunServer(&pp);
+    if (FLAGS_epoll) {
+      pp.reset(new epoll::EvPool);
+    } else {
+      pp.reset(new UringPool);
+    }
+    pp->Run();
+    RunServer(pp.get());
   } else {
     CHECK_GT(FLAGS_size, 0U);
 
+    pp.reset(new UringPool);
+    pp->Run();
+
+    // the simplest way to support dns resolution is to use asio resolver.
     asio::io_context io_context;
     tcp::resolver resolver{io_context};
     system::error_code ec;
@@ -211,17 +223,17 @@ int main(int argc, char* argv[]) {
     CHECK(!ec) << "Could not resolve " << FLAGS_connect << " " << ec.message();
     CHECK(!results.empty());
     auto start = absl::GetCurrentTimeNanos();
-    pp.AwaitFiberOnAll([&](auto* p) { RunClient(*results.begin(), p); });
+    pp->AwaitFiberOnAll([&](auto* p) { RunClient(*results.begin(), p); });
     auto dur = absl::GetCurrentTimeNanos() - start;
     size_t dur_ms = std::max<size_t>(1, dur / 1000000);
     size_t dur_sec = std::max<size_t>(1, dur_ms / 1000);
 
     CONSOLE_INFO << "Total time " << dur_ms
-                 << " ms, average qps: " << (pp.size() * size_t(FLAGS_c) * FLAGS_n) / dur_sec
+                 << " ms, average qps: " << (pp->size() * size_t(FLAGS_c) * FLAGS_n) / dur_sec
                  << "\n";
     CONSOLE_INFO << "Overall latency (usec) " << lat_hist.ToString();
   }
-  pp.Stop();
+  pp->Stop();
 
   return 0;
 }
