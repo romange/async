@@ -85,8 +85,10 @@ void EchoConnection::HandleRequests() {
 
   while (true) {
     ec = ReadMsg(&sz);
-    if (FiberSocket::IsConnClosed(ec))
+    if (FiberSocket::IsConnClosed(ec)) {
+      LOG(INFO) << "Closing " << socket_->RemoteEndpoint();
       break;
+    }
     CHECK(!ec) << ec;
     ping_qps.Inc();
 
@@ -158,13 +160,16 @@ void Driver::Run(base::Histogram* dest) {
   vec[1].iov_base = msg.get();
 
   for (unsigned i = 0; i < FLAGS_n; ++i) {
+
     auto start = absl::GetCurrentTimeNanos();
     es = socket_.Send(asio::buffer(msg.get(), FLAGS_size));
     CHECK(es.has_value()) << es.error();
     CHECK_EQ(es.value(), FLAGS_size);
 
+    LOG(INFO) << "Recv " << socket_.LocalEndpoint() << " " << i;
     auto res2 = socket_.Recv(vec, 2);
-    CHECK(res2.has_value()) << res2.error();
+    CHECK(res2.has_value()) << "Sock " << socket_.LocalEndpoint() << " " <<
+                            i << res2.error().message();
     CHECK_EQ(res2.value(), size_t(FLAGS_size + 4));
 
     uint64_t dur = absl::GetCurrentTimeNanos() - start;
