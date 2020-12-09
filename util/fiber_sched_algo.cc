@@ -28,7 +28,7 @@ FiberSchedAlgo::~FiberSchedAlgo() {
 }
 
 void FiberSchedAlgo::awakened(FiberContext* ctx, FiberProps& props) noexcept {
-  DCHECK(!ctx->ready_is_linked());
+  DCHECK(!ctx->ready_is_linked()) << props.name();
 
   if (ctx->is_context(fibers::type::dispatcher_context)) {
     DVLOG(2) << "Awakened dispatch";

@@ -28,14 +28,15 @@ namespace {
 class FiberCall {
   SubmitEntry se_;
   fibers::context* me_;
-  IoResult io_res_;
-
+  IoResult io_res_ = 0;
+  uint32_t flags_ = 0;
  public:
-  FiberCall(Proactor* proactor) : me_(fibers::context::active()), io_res_(0) {
+  FiberCall(Proactor* proactor) : me_(fibers::context::active()) {
     register_fd_ = proactor->HasRegisterFd();
 
-    auto waker = [this](IoResult res, int32_t, Proactor* mgr) {
+    auto waker = [this](IoResult res, uint32_t flags, int64_t, Proactor* mgr) {
       io_res_ = res;
+      flags_ = flags;
       fibers::context::active()->schedule(me_);
     };
     se_ = proactor->GetSubmitEntry(std::move(waker), 0);
@@ -57,6 +58,7 @@ class FiberCall {
     return io_res_;
   }
 
+  uint32_t flags() const { return flags_; }
  private:
   bool register_fd_;
 };
@@ -171,6 +173,12 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
     }
     fd_ = -1;
     ec = error_code(-io_res, system::system_category());
+  } else {
+    // Not sure if this check is needed, to be on the safe side.
+    int serr = 0;
+    socklen_t slen = sizeof(serr);
+    CHECK_EQ(0, getsockopt(fd_, SOL_SOCKET, SO_ERROR, &serr, &slen));
+    CHECK_EQ(0, serr);
   }
   return ec;
 }
@@ -236,7 +244,7 @@ auto FiberSocket::RecvMsg(const msghdr& msg, int flags) -> expected_size_t {
   // Added TODO to proactor.h
   if (!p->HasFastPoll()) {
     DVSOCK(1) << "POLLIN";
-    auto cb = [this](IoResult res, int32_t, Proactor* mgr) {
+    auto cb = [this](IoResult res, uint32_t, int32_t, Proactor* mgr) {
       DVSOCK(1) << "POLLING RES " << res;
     };
     SubmitEntry se = p->GetSubmitEntry(std::move(cb), 0);

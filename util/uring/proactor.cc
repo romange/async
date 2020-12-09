@@ -374,7 +374,7 @@ void Proactor::DispatchCompletions(io_uring_cqe* cqes, unsigned count) {
       e.val = next_free_ce_;
       next_free_ce_ = index;
 
-      func(cqe.res, payload, this);
+      func(cqe.res, cqe.flags, payload, this);
       continue;
     }
 

@@ -26,7 +26,7 @@ UringFiberAlgo::~UringFiberAlgo() {
 // suspend_until halts the thread in case there are no active fibers to run on it.
 // This function is called by dispatcher fiber.
 void UringFiberAlgo::SuspendWithTimer(const time_point& abs_time) noexcept {
-  auto cb = [](Proactor::IoResult res, int64_t, Proactor*) {
+  auto cb = [](Proactor::IoResult res, uint32_t, int64_t, Proactor*) {
     // If io_uring does not support timeout, then this callback will be called
     // earlier than needed and dispatch won't awake the sleeping fiber.
     // This will cause deadlock.

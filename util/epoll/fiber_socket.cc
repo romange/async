@@ -114,6 +114,11 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
   OnSetProactor();
   current_context_ = fibers::context::active();
 
+  epoll_event ev;
+  ev.events = EPOLLIN | EPOLLOUT;
+  ev.data.u32 = arm_index_ + 1024;  // TODO: to fix it.
+
+  CHECK_EQ(0, epoll_ctl(GetEv()->ev_loop_fd(), EPOLL_CTL_MOD, fd_, &ev));
   while (true) {
     int res = connect(fd_, ep.data(), ep.size());
     if (res == 0) {
@@ -124,16 +129,23 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
       ec = from_errno();
       break;
     }
+
+    DVLOG(2) << "Suspending " << fibers_ext::short_id(current_context_);
     current_context_->suspend();
+    DVLOG(2) << "Resuming " << fibers_ext::short_id(current_context_);
   }
   current_context_ = nullptr;
 
   if (ec) {
+    GetEv()->Disarm(fd_, arm_index_);
     if (close(fd_) < 0) {
       LOG(WARNING) << "Could not close fd " << strerror(errno);
     }
     fd_ = -1;
   }
+  ev.events = EPOLLIN;
+  CHECK_EQ(0, epoll_ctl(GetEv()->ev_loop_fd(), EPOLL_CTL_MOD, fd_, &ev));
+
   return ec;
 }
 
@@ -238,8 +250,13 @@ auto FiberSocket::RecvMsg(const msghdr& msg, int flags) -> expected_size_t {
 
 void FiberSocket::Wakey(uint32_t ev_mask, EvController* cntr) {
   DVLOG(2) << "Wakey " << ev_mask;
-  if (current_context_)
+
+  // It could be that we scheduled current_context_ already but has not switched to it yet.
+  // Meanwhile a new event has arrived that triggered this callback again.
+  if (current_context_ && !current_context_->ready_is_linked()) {
+    DVLOG(2) << "Wakey: Scheduling " << fibers_ext::short_id(current_context_);
     fibers::context::active()->schedule(current_context_);
+  }
 }
 
 }  // namespace epoll
