@@ -33,14 +33,14 @@ struct ListenerInterface::SafeConnList {
   void Link(Connection* c) {
     std::lock_guard<fibers::mutex> lk(mu);
     list.push_front(*c);
-    VLOG(2) << "List size " << list.size();
+    DVLOG(3) << "List size " << list.size();
   }
 
   void Unlink(Connection* c) {
     std::lock_guard<fibers::mutex> lk(mu);
     auto it = list.iterator_to(*c);
     list.erase(it);
-    DVLOG(2) << "List size " << list.size();
+    DVLOG(3) << "List size " << list.size();
 
     if (list.empty()) {
       cond.notify_one();
@@ -77,7 +77,7 @@ void ListenerInterface::RunAcceptLoop() {
     }
     std::unique_ptr<FiberSocketBase> peer{res.value()};
 
-    VLOG(2) << "Accepted " << peer->native_handle() << ": " << peer->LocalEndpoint();
+    VSOCK(2, *peer) << "Accepted " << peer->RemoteEndpoint();
     ProactorBase* next = pool_->GetNextProactor();  // Could be for another thread.
     peer->SetProactor(next);
     Connection* conn = NewConnection(next);
@@ -86,7 +86,7 @@ void ListenerInterface::RunAcceptLoop() {
 
     // mutable because we move peer.
     auto cb = [conn, next, &safe_list]() mutable {
-      next->AsyncFiber(&RunSingleConnection, conn, &safe_list);
+      RunSingleConnection(conn, &safe_list);
     };
 
     // Run cb in its Proactor thread.
@@ -118,7 +118,7 @@ ListenerInterface::~ListenerInterface() {
 }
 
 void ListenerInterface::RunSingleConnection(Connection* conn, SafeConnList* conns) {
-  VSOCK(2, *conn) << "Running connection";
+  VSOCK(2, *conn) << "Running connection ";
 
   std::unique_ptr<Connection> guard(conn);
   try {

@@ -236,6 +236,7 @@ void Proactor::Run() {
     spin_loops = 0;  // Reset the spinning.
 
     DCHECK_EQ(0U, tq_seq & 1) << tq_seq;
+    // TODO: to check this - this_fiber::yield();  // Allow dispatcher to run before we block.
 
     /**
      * If tq_seq_ has changed since it was cached into tq_seq, then

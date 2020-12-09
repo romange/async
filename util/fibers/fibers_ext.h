@@ -23,7 +23,7 @@ enum DoneWaitDirective { AND_NOTHING = 0, AND_RESET = 1 };
 namespace fibers_ext {
 
 inline uint16_t short_id(::boost::fibers::context* ctx) {
-  return reinterpret_cast<uintptr_t>(ctx);
+  return reinterpret_cast<uintptr_t>(ctx) / 8;
 }
 
 inline uint16_t short_id() {

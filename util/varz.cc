@@ -78,4 +78,16 @@ VarzValue VarzFunction::GetData() const {
   return AnyValue(result);
 }
 
+void VarzCount::Init(ProactorPool* pp) {
+  CHECK_NOTNULL(pp);
+}
+
+VarzValue VarzCount::GetData() const {
+  AnyValue res = VarzValue::FromInt(count_.load(std::memory_order_relaxed));
+  return res;
+}
+
+VarzCount::~VarzCount() {
+}
+
 }  // namespace util

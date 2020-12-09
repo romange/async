@@ -88,7 +88,8 @@ auto FiberSchedAlgo::pick_next() noexcept -> FiberContext* {
     ProactorBase::tl_info_.monotonic_time = now;
     uint64_t delta_micros = (now - props->awaken_ts_) / 1000;
     if (delta_micros > 30000) {
-      LOG(INFO) << "Took " << delta_micros / 1000 << " msec to activate " << props->name();
+      LOG(INFO) << "Took " << delta_micros / 1000 << " msec to activate "
+                << fibers_ext::short_id(ctx) << "/" << props->name();
     }
   } else {
     DVLOG(1) << "Switching to dispatch";  // TODO: to switch to RAW_LOG.

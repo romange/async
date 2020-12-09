@@ -70,6 +70,26 @@ class VarzMapAverage : public base::VarzListNode {
   std::unique_ptr<Map[]> avg_map_;
 };
 
+
+class VarzCount : public base::VarzListNode {
+
+ public:
+  explicit VarzCount(const char* varname) : base::VarzListNode(varname) {
+  }
+  ~VarzCount();
+
+  void Init(ProactorPool* pp);
+
+  void IncBy(int64_t delta) {
+    count_.fetch_add(delta, std::memory_order_relaxed);
+  }
+
+ private:
+  AnyValue GetData() const override;
+
+  std::atomic_int64_t count_{0};
+};
+
 class VarzFunction : public base::VarzListNode {
  public:
   typedef AnyValue::Map KeyValMap;
