@@ -59,6 +59,13 @@ class SubmitEntry {
     sqe_->timeout_flags = (is_abs ? IORING_TIMEOUT_ABS : 0);
   }
 
+  void PrepLinkTimeout(const timespec* ts) {
+    PrepFd(IORING_OP_LINK_TIMEOUT, -1);
+    sqe_->addr = (unsigned long)ts;
+    sqe_->len = 1;
+    sqe_->timeout_flags = 0;
+  }
+
   // TODO: To remove this accessor.
   io_uring_sqe* sqe() {
     return sqe_;

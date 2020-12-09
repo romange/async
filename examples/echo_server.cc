@@ -41,6 +41,8 @@ DEFINE_int32(port, 8081, "Echo server port");
 DEFINE_uint32(n, 1000, "Number of requests per connection");
 DEFINE_uint32(c, 10, "Number of connections per thread");
 DEFINE_uint32(size, 1, "Message size, 0 for hardcoded 4 byte pings");
+DEFINE_uint32(backlog, 1024, "Accept queue length");
+
 DEFINE_string(connect, "", "hostname or ip address to connect to in client mode");
 
 VarzQps ping_qps("ping-qps");
@@ -75,6 +77,9 @@ void EchoConnection::HandleRequests() {
   size_t sz;
   iovec vec[2];
   uint8_t buf[8];
+
+  int yes = 1;
+  CHECK_EQ(0, setsockopt(socket_->native_handle(), IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)));
 
   connections.IncBy(1);
   AsioStreamAdapter<FiberSocketBase> asa(*socket_);
@@ -134,7 +139,7 @@ void RunServer(ProactorPool* pp) {
   connections.Init(pp);
 
   AcceptServer acceptor(pp);
-  acceptor.set_back_log(16);
+  acceptor.set_back_log(FLAGS_backlog);
 
   acceptor.AddListener(FLAGS_port, new EchoListener);
   if (FLAGS_http_port >= 0) {
@@ -154,7 +159,7 @@ class Driver {
  public:
   Driver(ProactorBase* p);
 
-  void Connect(const tcp::endpoint& ep);
+  void Connect(unsigned index, const tcp::endpoint& ep);
   void Run(base::Histogram* dest);
 
  private:
@@ -165,20 +170,34 @@ Driver::Driver(ProactorBase* p) {
   socket_.reset(p->CreateSocket());
 }
 
-void Driver::Connect(const tcp::endpoint& ep) {
+void Driver::Connect(unsigned index, const tcp::endpoint& ep) {
   size_t iter = 0;
   size_t kMaxIter = 3;
-
+  VLOG(1) << "Driver::Connect-Start " << index;
   for (; iter < kMaxIter; ++iter) {
+    uint64_t start = absl::GetCurrentTimeNanos();
     auto ec = socket_->Connect(ep);
     CHECK(!ec) << ec.message();
     VLOG(1) << "Connected to " << socket_->RemoteEndpoint();
 
+    uint64_t start1 = absl::GetCurrentTimeNanos();
+    uint64_t delta_msec = (start1 - start) / 1000000;
+    LOG_IF(ERROR, delta_msec > 1000) << "Slow connect1 " << index << " " << delta_msec << " ms";
+
     // Send msg size.
     absl::little_endian::Store64(buf_, FLAGS_size);
     uring::FiberSocket::expected_size_t es = socket_->Send(asio::buffer(buf_));
-    CHECK_EQ(8U, es.value_or(0));  // Send expected payload size.
+    CHECK(es) << es.error();  // Send expected payload size.
+    CHECK_EQ(8U, es.value());
+
+    uint64_t start2 = absl::GetCurrentTimeNanos();
+    delta_msec = (start2 - start) / 1000000;
+    LOG_IF(ERROR, delta_msec > 2000) << "Slow connect2 " << index << " " << delta_msec << " ms";
+
     es = socket_->Recv(asio::buffer(buf_, 1));
+    delta_msec = (absl::GetCurrentTimeNanos() - start2) / 1000000;
+    LOG_IF(ERROR, delta_msec > 2000) << "Slow connect3 " << index << " " << delta_msec << " ms";
+
     if (es) {
       CHECK_EQ(1U, es.value());
       break;
@@ -189,8 +208,10 @@ void Driver::Connect(const tcp::endpoint& ep) {
     // we discover this upon first Recv. I am not sure why it happens. Right now I retry.
     CHECK(es.error() == std::errc::connection_reset) << es.error();
     socket_->Close();
+    LOG(WARNING) << "Driver " << index << " retries";
   }
   CHECK_LT(iter, kMaxIter) << "Maximum reconnects reached";
+  VLOG(1) << "Driver::Connect-End " << index;
 }
 
 void Driver::Run(base::Histogram* dest) {
@@ -213,7 +234,7 @@ void Driver::Run(base::Histogram* dest) {
     CHECK(es.has_value()) << es.error();
     CHECK_EQ(es.value(), FLAGS_size);
 
-    LOG(INFO) << "Recv " << lep << " " << i;
+    // DVLOG(1) << "Recv " << lep << " " << i;
     es = socket_->Recv(vec, 1);
     CHECK(es.has_value()) << "RecvError: " << es.error() << "/" << lep;
     auto res2 = socket_->Recv(vec + 1, 1);
@@ -250,15 +271,21 @@ class TLocalClient {
 };
 
 void TLocalClient::Connect(tcp::endpoint ep) {
+  LOG(INFO) << "TLocalClient::Connect-Start";
   vector<fibers::fiber> fbs(drivers_.size());
   for (size_t i = 0; i < fbs.size(); ++i) {
     fbs[i] = fibers::fiber([&, i] {
       this_fiber::properties<FiberProps>().set_name(absl::StrCat("connect/", i));
-      drivers_[i]->Connect(ep);
+      uint64_t start = absl::GetCurrentTimeNanos();
+      drivers_[i]->Connect(i, ep);
+      uint64_t delta_msec = (absl::GetCurrentTimeNanos() - start) / 1000000;
+      LOG_IF(ERROR, delta_msec > 4000) << "Slow DriverConnect " << delta_msec << " ms";
     });
   }
   for (auto& fb : fbs)
     fb.join();
+  LOG(INFO) << "TLocalClient::Connect-End";
+  google::FlushLogFiles(google::INFO);
 }
 
 void TLocalClient::Run() {
@@ -324,7 +351,7 @@ int main(int argc, char* argv[]) {
     CONSOLE_INFO << "Total time " << dur_ms
                  << " ms, average qps: " << (pp->size() * size_t(FLAGS_c) * FLAGS_n) / dur_sec
                  << "\n";
-    CONSOLE_INFO << "Overall latency (usec) " << lat_hist.ToString();
+    CONSOLE_INFO << "Overall latency (usec) \n" << lat_hist.ToString();
   }
   pp->Stop();
 
