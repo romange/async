@@ -44,6 +44,7 @@ DEFINE_uint32(size, 1, "Message size, 0 for hardcoded 4 byte pings");
 DEFINE_string(connect, "", "hostname or ip address to connect to in client mode");
 
 VarzQps ping_qps("ping-qps");
+VarzCount connections("connections");
 
 class EchoConnection : public Connection {
  public:
@@ -75,9 +76,27 @@ void EchoConnection::HandleRequests() {
   iovec vec[2];
   uint8_t buf[8];
 
+  connections.IncBy(1);
   AsioStreamAdapter<FiberSocketBase> asa(*socket_);
-  size_t bs = asio::read(asa, asio::buffer(buf), ec);
-  CHECK(!ec && bs == sizeof(buf));
+  vec[0].iov_base = buf;
+  vec[0].iov_len = 8;
+
+  auto ep = socket_->RemoteEndpoint();
+  LOG(INFO) << "Waiting for size from " << ep;
+  auto es = socket_->Recv(asio::buffer(buf, 8));
+  if (!es.has_value()) {
+    if (es.error().value() == ECONNABORTED)
+      return;
+    LOG(FATAL) << "Bad Conn Handshake " << es.error() << " for socket " << ep;
+  } else {
+    CHECK_EQ(es.value(), 8U);
+    LOG(INFO) << "Received size from " << ep;
+    uint8_t val = 1;
+    socket_->Send(asio::buffer(&val, 1));
+  }
+
+  // size_t bs = asio::read(asa, asio::buffer(buf), ec);
+  CHECK(es.has_value() && es.value() == sizeof(buf));
   req_len_ = absl::little_endian::Load64(buf);
 
   CHECK_LE(req_len_, 1UL << 18);
@@ -100,6 +119,7 @@ void EchoConnection::HandleRequests() {
     auto res = socket_->Send(vec, 2);
     CHECK(res.has_value());
   }
+  connections.IncBy(-1);
 }
 
 class EchoListener : public ListenerInterface {
@@ -111,8 +131,11 @@ class EchoListener : public ListenerInterface {
 
 void RunServer(ProactorPool* pp) {
   ping_qps.Init(pp);
+  connections.Init(pp);
 
   AcceptServer acceptor(pp);
+  acceptor.set_back_log(16);
+
   acceptor.AddListener(FLAGS_port, new EchoListener);
   if (FLAGS_http_port >= 0) {
     uint16_t port = acceptor.AddListener(FLAGS_http_port, new HttpListener<>);
@@ -124,34 +147,57 @@ void RunServer(ProactorPool* pp) {
 }
 
 class Driver {
-  FiberSocket socket_;
+  std::unique_ptr<FiberSocketBase> socket_;
 
   Driver(const Driver&) = delete;
 
  public:
-  Driver(const tcp::endpoint& ep, Proactor* p);
+  Driver(ProactorBase* p);
 
+  void Connect(const tcp::endpoint& ep);
   void Run(base::Histogram* dest);
 
  private:
-
   uint8_t buf_[8];
 };
 
-Driver::Driver(const tcp::endpoint& ep, Proactor* p) : socket_(p) {
-  auto ec = socket_.Connect(ep);
-  CHECK(!ec) << ec;
-  VLOG(1) << "Connected to " << socket_.RemoteEndpoint();
+Driver::Driver(ProactorBase* p) {
+  socket_.reset(p->CreateSocket());
+}
+
+void Driver::Connect(const tcp::endpoint& ep) {
+  size_t iter = 0;
+  size_t kMaxIter = 3;
+
+  for (; iter < kMaxIter; ++iter) {
+    auto ec = socket_->Connect(ep);
+    CHECK(!ec) << ec.message();
+    VLOG(1) << "Connected to " << socket_->RemoteEndpoint();
+
+    // Send msg size.
+    absl::little_endian::Store64(buf_, FLAGS_size);
+    uring::FiberSocket::expected_size_t es = socket_->Send(asio::buffer(buf_));
+    CHECK_EQ(8U, es.value_or(0));  // Send expected payload size.
+    es = socket_->Recv(asio::buffer(buf_, 1));
+    if (es) {
+      CHECK_EQ(1U, es.value());
+      break;
+    }
+
+    // There could be scenario where tcp Connect succeeds, but socket in fact is not really
+    // connected (which I suspect happens due to small accept queue) and
+    // we discover this upon first Recv. I am not sure why it happens. Right now I retry.
+    CHECK(es.error() == std::errc::connection_reset) << es.error();
+    socket_->Close();
+  }
+  CHECK_LT(iter, kMaxIter) << "Maximum reconnects reached";
 }
 
 void Driver::Run(base::Histogram* dest) {
   base::Histogram hist;
 
-  absl::little_endian::Store64(buf_, FLAGS_size);
   std::unique_ptr<uint8_t[]> msg(new uint8_t[FLAGS_size]);
 
-  uring::FiberSocket::expected_size_t es = socket_.Send(asio::buffer(buf_));
-  CHECK_EQ(8U, es.value_or(0));  // Send expected payload size.
 
   iovec vec[2];
   vec[0].iov_len = 4;
@@ -159,45 +205,82 @@ void Driver::Run(base::Histogram* dest) {
   vec[1].iov_len = FLAGS_size;
   vec[1].iov_base = msg.get();
 
+  auto lep = socket_->LocalEndpoint();
+  CHECK(socket_->IsOpen());
   for (unsigned i = 0; i < FLAGS_n; ++i) {
-
     auto start = absl::GetCurrentTimeNanos();
-    es = socket_.Send(asio::buffer(msg.get(), FLAGS_size));
+    FiberSocketBase::expected_size_t es = socket_->Send(asio::buffer(msg.get(), FLAGS_size));
     CHECK(es.has_value()) << es.error();
     CHECK_EQ(es.value(), FLAGS_size);
 
-    LOG(INFO) << "Recv " << socket_.LocalEndpoint() << " " << i;
-    auto res2 = socket_.Recv(vec, 2);
-    CHECK(res2.has_value()) << "Sock " << socket_.LocalEndpoint() << " " <<
-                            i << res2.error().message();
-    CHECK_EQ(res2.value(), size_t(FLAGS_size + 4));
+    LOG(INFO) << "Recv " << lep << " " << i;
+    es = socket_->Recv(vec, 1);
+    CHECK(es.has_value()) << "RecvError: " << es.error() << "/" << lep;
+    auto res2 = socket_->Recv(vec + 1, 1);
+    CHECK(res2.has_value()) << "Sock " << socket_->LocalEndpoint() << " " << i
+                            << res2.error().message();
+    CHECK_EQ(res2.value(), size_t(FLAGS_size));
 
     uint64_t dur = absl::GetCurrentTimeNanos() - start;
     hist.Add(dur / 1000);
   }
-  socket_.Shutdown(SHUT_RDWR);
+
+  socket_->Shutdown(SHUT_RDWR);
   dest->Merge(hist);
 }
 
 mutex lat_mu;
 base::Histogram lat_hist;
 
-void RunClient(tcp::endpoint ep, ProactorBase* p) {
-  vector<fibers::fiber> drivers(FLAGS_c);
+class TLocalClient {
+  ProactorBase* p_;
+  vector<std::unique_ptr<Driver>> drivers_;
+
+  TLocalClient(const TLocalClient&) = delete;
+ public:
+  TLocalClient(ProactorBase* p) : p_(p) {
+    drivers_.resize(FLAGS_c);
+    for (size_t i = 0; i < drivers_.size(); ++i) {
+      drivers_[i].reset(new Driver{p});
+    }
+  }
+
+  void Connect(tcp::endpoint ep);
+  void Run();
+};
+
+void TLocalClient::Connect(tcp::endpoint ep) {
+  vector<fibers::fiber> fbs(drivers_.size());
+  for (size_t i = 0; i < fbs.size(); ++i) {
+    fbs[i] = fibers::fiber([&, i] {
+      this_fiber::properties<FiberProps>().set_name(absl::StrCat("connect/", i));
+      drivers_[i]->Connect(ep);
+    });
+  }
+  for (auto& fb : fbs)
+    fb.join();
+}
+
+void TLocalClient::Run() {
+  this_fiber::properties<FiberProps>().set_name("RunClient");
   base::Histogram hist;
-  for (size_t i = 0; i < drivers.size(); ++i) {
-    drivers[i] = fibers::fiber([&] {
-      Driver d{ep, static_cast<Proactor*>(p)};
-      d.Run(&hist);
+
+  LOG(INFO) << "RunClient " << p_->GetIndex();
+
+  vector<fibers::fiber> fbs(drivers_.size());
+  for (size_t i = 0; i < fbs.size(); ++i) {
+    fbs[i] = fibers::fiber([&, i] {
+      this_fiber::properties<FiberProps>().set_name(absl::StrCat("run/", i));
+      drivers_[i]->Run(&hist);
     });
   }
 
-  for (size_t i = 0; i < drivers.size(); ++i) {
-    drivers[i].join();
-  }
+  for (auto& fb : fbs)
+    fb.join();
   unique_lock<mutex> lk(lat_mu);
   lat_hist.Merge(hist);
 }
+
 
 int main(int argc, char* argv[]) {
   MainInitGuard guard(&argc, &argv);
@@ -205,20 +288,17 @@ int main(int argc, char* argv[]) {
   CHECK_GT(FLAGS_port, 0);
 
   std::unique_ptr<ProactorPool> pp;
+  if (FLAGS_epoll) {
+    pp.reset(new epoll::EvPool);
+  } else {
+    pp.reset(new UringPool);
+  }
+  pp->Run();
 
   if (FLAGS_connect.empty()) {
-    if (FLAGS_epoll) {
-      pp.reset(new epoll::EvPool);
-    } else {
-      pp.reset(new UringPool);
-    }
-    pp->Run();
     RunServer(pp.get());
   } else {
     CHECK_GT(FLAGS_size, 0U);
-
-    pp.reset(new UringPool);
-    pp->Run();
 
     // the simplest way to support dns resolution is to use asio resolver.
     asio::io_context io_context;
@@ -227,8 +307,16 @@ int main(int argc, char* argv[]) {
     auto const results = resolver.resolve(FLAGS_connect, absl::StrCat(FLAGS_port), ec);
     CHECK(!ec) << "Could not resolve " << FLAGS_connect << " " << ec.message();
     CHECK(!results.empty());
+    thread_local std::unique_ptr<TLocalClient> client;
+    pp->AwaitFiberOnAll([&](auto* p) {
+      client.reset(new TLocalClient(p));
+      client->Connect(*results.begin());
+    });
+
     auto start = absl::GetCurrentTimeNanos();
-    pp->AwaitFiberOnAll([&](auto* p) { RunClient(*results.begin(), p); });
+    pp->AwaitFiberOnAll([&](auto* p) {
+      client->Run();
+    });
     auto dur = absl::GetCurrentTimeNanos() - start;
     size_t dur_ms = std::max<size_t>(1, dur / 1000000);
     size_t dur_sec = std::max<size_t>(1, dur_ms / 1000);
