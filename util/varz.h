@@ -22,6 +22,8 @@ class VarzQps : public base::VarzListNode {
     val_.Init(pp);
   }
 
+  void Shutdown() { val_.Shutdown(); }
+
   void Inc() {
     val_.Inc();
   }
@@ -46,6 +48,7 @@ class VarzMapAverage : public base::VarzListNode {
   ~VarzMapAverage();
 
   void Init(ProactorPool* pp);
+  void Shutdown();
 
   void IncBy(absl::string_view key, int32_t delta) {
     auto& map = avg_map_[ProactorThreadIndex()];
@@ -79,6 +82,7 @@ class VarzCount : public base::VarzListNode {
   ~VarzCount();
 
   void Init(ProactorPool* pp);
+  void Shutdown();
 
   void IncBy(int64_t delta) {
     count_.fetch_add(delta, std::memory_order_relaxed);

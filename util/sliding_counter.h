@@ -89,6 +89,11 @@ template <unsigned NUM> class SlidingCounter : protected detail::SlidingCounterB
     sc_thread_map_.reset(new Counter[pp_->size()]);
   }
 
+  void Shutdown() {
+    sc_thread_map_.reset();
+    pp_ = nullptr;
+  }
+
   void Inc() {
     sc_thread_map_[ProactorThreadIndex()].Inc();
   }

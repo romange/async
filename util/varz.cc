@@ -24,6 +24,12 @@ void VarzMapAverage::Init(ProactorPool* pp) {
   avg_map_.reset(new Map[pp->size()]);
 }
 
+void VarzMapAverage::Shutdown() {
+  avg_map_.reset();
+  pp_ = nullptr;
+}
+
+
 unsigned VarzMapAverage::ProactorThreadIndex() const {
   unsigned tnum = CHECK_NOTNULL(pp_)->size();
 
@@ -80,6 +86,10 @@ VarzValue VarzFunction::GetData() const {
 
 void VarzCount::Init(ProactorPool* pp) {
   CHECK_NOTNULL(pp);
+}
+
+
+void VarzCount::Shutdown() {
 }
 
 VarzValue VarzCount::GetData() const {
