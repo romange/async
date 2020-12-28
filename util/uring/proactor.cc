@@ -94,8 +94,8 @@ constexpr uint32_t kSpinLimit = 10;
 
 }  // namespace
 
-
-Proactor::Proactor() : ProactorBase() {}
+Proactor::Proactor() : ProactorBase() {
+}
 
 Proactor::~Proactor() {
   idle_map_.clear();
@@ -182,8 +182,8 @@ void Proactor::Run() {
     if (tq_seq & 1) {
       // We allow dispatch fiber to run.
 
-      // We must reset LSB for both tq_seq and tq_seq_  so that if notify() was called after yield(),
-      // tq_seq_ would be invalidated.
+      // We must reset LSB for both tq_seq and tq_seq_  so that if notify() was called after
+      // yield(), tq_seq_ would be invalidated.
 
       tq_seq_.fetch_and(~1, std::memory_order_relaxed);
       tq_seq &= ~1;
@@ -398,6 +398,9 @@ SubmitEntry Proactor::GetSubmitEntry(CbType cb, int64_t payload) {
   io_uring_sqe* res = io_uring_get_sqe(&ring_);
   if (res == NULL) {
     fibers::context* current = fibers::context::active();
+
+    // TODO: we should call io_uring_submit() from here and busy poll on errors like
+    // EBUSY, EAGAIN etc.
     CHECK(current != main_loop_ctx_) << "SQE overflow in the main context";
 
     sqe_avail_.await([this] { return io_uring_sq_space_left(&ring_) > 0; });
@@ -453,6 +456,41 @@ void Proactor::ArmWakeupEvent() {
   static uint64_t donot_care;
   io_uring_prep_read(sqe, wake_fixed_fd_, &donot_care, 8, 0);
   sqe->user_data = kWakeIndex;
+}
+
+void Proactor::SchedulePeriodic(uint32_t id, std::shared_ptr<PeriodicItem> item) {
+  SubmitEntry se = GetSubmitEntry(
+      [this, item](IoResult res, uint32_t flags, int64_t task_id, Proactor* mgr) {
+        this->PeriodicCb(res, task_id, std::move(item));
+      },
+      id);
+
+  se.PrepTimeout(&item->ts, false);
+  item->val1 = se.sqe()->user_data;
+}
+
+void Proactor::PeriodicCb(IoResult res, int64_t task_id, std::shared_ptr<PeriodicItem> item) {
+  if (res == -ECANCELED) {
+    return;
+  }
+  CHECK_EQ(res, -ETIME);
+  if (item.unique())
+    return;  // has been removed from the map.
+  auto it = periodic_map_.find(task_id);
+  if (it == periodic_map_.end())
+    return;
+  item->task();
+  SchedulePeriodic(task_id, std::move(item));
+}
+
+void Proactor::CancelPeriodicInternal(std::shared_ptr<PeriodicItem> item) {
+  auto* me = fibers::context::active();
+  auto cb = [me](IoResult res, uint32_t flags, int64_t task_id, Proactor* mgr) {
+    fibers::context::active()->schedule(me);
+  };
+  SubmitEntry se = GetSubmitEntry(std::move(cb), 0);
+  se.PrepTimeoutRemove(item->val1);
+  me->suspend();
 }
 
 unsigned Proactor::RegisterFd(int source_fd) {

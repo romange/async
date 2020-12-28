@@ -4,6 +4,7 @@
 #pragma once
 
 #include <pthread.h>
+#include <sys/time.h>
 
 #include <boost/fiber/fiber.hpp>
 
@@ -125,6 +126,7 @@ class ProactorBase {
   }
 
   using IdleTask = std::function<bool()>;
+  using PeriodicTask = std::function<void()>;
 
   /**
    * @brief Adds a task that should run when Proactor loop is idle. The task should return
@@ -134,15 +136,31 @@ class ProactorBase {
    * @param f
    * @return uint64_t an unique ids denoting this task. Can be used for cancellation.
    */
-  uint64_t AddIdleTask(IdleTask f);
+  uint32_t AddIdleTask(IdleTask f);
+
+  //! PeriodicTask should not block since it runs from I/O loop.
+  uint32_t AddPeriodic(uint32_t ms, PeriodicTask f);
+
+  //! Blocking until the task has been cancelled. Should not be run from I/O loop
+  //! i.e. only from AwaitBlocking or another fiber.
+  void CancelPeriodic(uint32_t id);
 
  protected:
   enum { WAIT_SECTION_STATE = 1UL << 31 };
+
+  struct PeriodicItem {
+    PeriodicTask task;
+    timespec ts;   // task period.
+    uint32_t val1;  // implementation dependent payload.
+    uint32_t val2;  // implementation dependent payload.
+  };
 
   // Called only from external threads.
   void WakeRing();
 
   void WakeupIfNeeded();
+  virtual void SchedulePeriodic(uint32_t id, std::shared_ptr<PeriodicItem> item) = 0;
+  virtual void CancelPeriodicInternal(std::shared_ptr<PeriodicItem> item) = 0;
 
   pthread_t thread_id_ = 0U;
   int wake_fd_;
@@ -169,11 +187,14 @@ class ProactorBase {
   FuncQ task_queue_;
   EventCount task_queue_avail_;
 
-  uint64_t next_idle_task_{1};
+  uint32_t next_task_id_{1};
   FiberSchedAlgo* scheduler_ = nullptr;
 
-  absl::flat_hash_map<uint64_t, IdleTask> idle_map_;
-  absl::flat_hash_map<uint64_t, IdleTask>::const_iterator idle_it_;
+  absl::flat_hash_map<uint32_t, IdleTask> idle_map_;
+  absl::flat_hash_map<uint32_t, IdleTask>::const_iterator idle_it_;
+
+  static_assert(sizeof(PeriodicItem) == 56);
+  absl::flat_hash_map<uint32_t, std::shared_ptr<PeriodicItem>> periodic_map_;
 
   struct TLInfo {
     uint32_t proactor_index = 0;

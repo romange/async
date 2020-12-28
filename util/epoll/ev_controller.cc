@@ -229,6 +229,36 @@ FiberSocketBase* EvController::CreateSocket() {
   return res;
 }
 
+void EvController::SchedulePeriodic(uint32_t id, std::shared_ptr<PeriodicItem> item) {
+  int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+  CHECK_GE(tfd, 0);
+  itimerspec ts;
+  ts.it_value = item->ts;
+  ts.it_interval = item->ts;
+  item->val1 = tfd;
+
+  auto cb = [item](uint32_t event_mask, EvController*) {
+    if (item.unique())
+      return;
+    item->task();
+    uint64_t res;
+    if (read(item->val1, &res, sizeof(res)) == -1) {
+      LOG(ERROR) << "Error reading from timer, errno " << errno;
+    }
+  };
+  unsigned arm_id = Arm(tfd, std::move(cb), EPOLLIN);
+  item->val2 = arm_id;
+
+  CHECK_EQ(0, timerfd_settime(tfd, 0, &ts, NULL));
+}
+
+void EvController::CancelPeriodicInternal(std::shared_ptr<PeriodicItem> item) {
+  Disarm(item->val1, item->val2);
+  if (close(item->val1) == -1) {
+    LOG(ERROR) << "Could not close timer, error " << errno;
+  }
+}
+
 void EvController::DispatchCompletions(epoll_event* cevents, unsigned count) {
   DVLOG(2) << "DispatchCompletions " << count << " cqes";
   for (unsigned i = 0; i < count; ++i) {

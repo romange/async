@@ -76,11 +76,34 @@ void ProactorBase::Stop() {
   VLOG(1) << "Proactor::StopFinish";
 }
 
-uint64_t ProactorBase::AddIdleTask(IdleTask f) {
-  uint64_t id = next_idle_task_++;
+uint32_t ProactorBase::AddIdleTask(IdleTask f) {
+  auto id = next_task_id_++;
   auto res = idle_map_.emplace(id, std::move(f));
   CHECK(res.second);
   return id;
+}
+
+uint32_t ProactorBase::AddPeriodic(uint32_t ms, PeriodicTask f) {
+  auto id = next_task_id_++;
+
+  std::shared_ptr<PeriodicItem> item = std::make_shared<PeriodicItem>();
+  item->task = std::move(f);
+  item->ts.tv_sec = ms / 1000;
+  item->ts.tv_nsec = (ms % 1000) * 1000000;
+
+  auto res = periodic_map_.emplace(id, std::move(item));
+  CHECK(res.second);
+
+  SchedulePeriodic(id, res.first->second);
+  return id;
+}
+
+void ProactorBase::CancelPeriodic(uint32_t id) {
+  auto it = periodic_map_.find(id);
+  CHECK(it != periodic_map_.end());
+  auto item = std::move(it->second);
+  periodic_map_.erase(it);
+  CancelPeriodicInternal(std::move(item));
 }
 
 void ProactorBase::RegisterSignal(std::initializer_list<uint16_t> l, std::function<void(int)> cb) {

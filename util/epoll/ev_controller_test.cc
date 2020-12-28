@@ -6,7 +6,6 @@
 
 #include <fcntl.h>
 #include <gmock/gmock.h>
-
 #include <netinet/in.h>
 #include <sys/socket.h>
 
@@ -14,15 +13,14 @@
 #include "base/gtest.h"
 #include "base/logging.h"
 #include "base/varz_value.h"
-#include "util/fibers/fibers_ext.h"
 #include "util/epoll/epoll_fiber_scheduler.h"
-
+#include "util/fibers/fibers_ext.h"
 
 using namespace boost;
 using namespace std;
+using base::VarzValue;
 using testing::ElementsAre;
 using testing::Pair;
-using base::VarzValue;
 
 namespace util {
 namespace epoll {
@@ -31,9 +29,7 @@ class EvControllerTest : public testing::Test {
  protected:
   void SetUp() override {
     ev_cntrl_ = std::make_unique<EvController>();
-    ev_cntrl_thread_ = thread{[this] {
-      ev_cntrl_->Run();
-    }};
+    ev_cntrl_thread_ = thread{[this] { ev_cntrl_->Run(); }};
   }
 
   void TearDown() {
@@ -46,7 +42,6 @@ class EvControllerTest : public testing::Test {
     testing::FLAGS_gtest_death_test_style = "threadsafe";
   }
 
-
   std::unique_ptr<EvController> ev_cntrl_;
   std::thread ev_cntrl_thread_;
 };
@@ -57,7 +52,6 @@ TEST_F(EvControllerTest, AsyncCall) {
   }
   usleep(5000);
 }
-
 
 TEST_F(EvControllerTest, Await) {
   thread_local int val = 5;
@@ -104,6 +98,23 @@ TEST_F(EvControllerTest, DispatchTest) {
   }
   LOG(INFO) << "BeforeJoin";
   fb.join();
+}
+
+TEST_F(EvControllerTest, Periodic) {
+  unsigned count = 0;
+  auto cb = [&] {
+    VLOG(1) << "Tick " << count;
+    ++count;
+  };
+
+  uint32_t id = ev_cntrl_->AwaitBrief([&] { return ev_cntrl_->AddPeriodic(1, cb); });
+
+  usleep(20000);
+  ev_cntrl_->AwaitBlocking([&] { return ev_cntrl_->CancelPeriodic(id); });
+  unsigned num = count;
+  ASSERT_TRUE(count >= 15 && count <= 25) << count;
+  usleep(20000);
+  EXPECT_EQ(num, count);
 }
 
 void BM_AsyncCall(benchmark::State& state) {

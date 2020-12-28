@@ -59,6 +59,12 @@ class SubmitEntry {
     sqe_->timeout_flags = (is_abs ? IORING_TIMEOUT_ABS : 0);
   }
 
+  void PrepTimeoutRemove(unsigned long long userdata) {
+    PrepFd(IORING_OP_TIMEOUT_REMOVE, -1);
+    sqe_->addr = userdata;
+    sqe_->len = 1;
+  }
+
   void PrepLinkTimeout(const timespec* ts) {
     PrepFd(IORING_OP_LINK_TIMEOUT, -1);
     sqe_->addr = (unsigned long)ts;

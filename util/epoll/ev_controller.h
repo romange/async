@@ -27,6 +27,7 @@ class EvController : public ProactorBase {
   // event_mask passed from epoll_event.events.
   using CbType = std::function<void(uint32_t event_mask, EvController*)>;
 
+  // Returns the handler id for the armed event.
   unsigned Arm(int fd, CbType cb, uint32_t event_mask);
   void UpdateCb(unsigned arm_index, CbType cb);
   void Disarm(int fd, unsigned arm_index);
@@ -40,6 +41,9 @@ class EvController : public ProactorBase {
   void DispatchCompletions(struct epoll_event* cevents, unsigned count);
 
   FiberSocketBase* CreateSocket() final;
+  void SchedulePeriodic(uint32_t id, std::shared_ptr<PeriodicItem> item) final;
+  void CancelPeriodicInternal(std::shared_ptr<PeriodicItem> item) final;
+
 
   void RegrowCentries();
   void ArmWakeupEvent();

@@ -90,7 +90,7 @@ TEST_F(ProactorTest, SqeOverflow) {
 
   constexpr size_t kMaxPending = kRingDepth * 100;
   fibers_ext::BlockingCounter bc(kMaxPending);
-  auto cb = [&bc](IoResult, int64_t payload, Proactor*) { bc.Dec(); };
+  auto cb = [&bc](IoResult, uint32_t, int64_t payload, Proactor*) { bc.Dec(); };
 
   proactor_->AsyncFiber([&]() mutable {
     for (unsigned i = 0; i < kMaxPending; ++i) {
@@ -176,7 +176,7 @@ TEST_F(ProactorTest, SqPoll) {
 TEST_F(ProactorTest, AsyncEvent) {
   fibers_ext::Done done;
 
-  auto cb = [done](IoResult, int64_t payload, Proactor* p) mutable { done.Notify(); };
+  auto cb = [done](IoResult, uint32_t, int64_t payload, Proactor* p) mutable { done.Notify(); };
 
   proactor_->AsyncBrief([&] {
     SubmitEntry se = proactor_->GetSubmitEntry(std::move(cb), 1);
@@ -253,6 +253,23 @@ TEST_F(ProactorTest, Varz) {
   pool[0].AwaitBlocking([&] { qps.Iterate(cb); });
 
   EXPECT_THAT(vals, ElementsAre(Pair("test1", 0)));
+}
+
+TEST_F(ProactorTest, Periodic) {
+  unsigned count = 0;
+  auto cb = [&] { ++count;};
+
+  uint32_t id = proactor_->AwaitBrief([&] {
+    return proactor_->AddPeriodic(1, cb);
+  });
+  usleep(20000);
+  proactor_->AwaitBlocking([&] {
+    return proactor_->CancelPeriodic(id);
+  });
+  unsigned num = count;
+  ASSERT_TRUE(count >= 15 && count <= 25) << count;
+  usleep(20000);
+  EXPECT_EQ(num, count);
 }
 
 void BM_AsyncCall(benchmark::State& state) {
