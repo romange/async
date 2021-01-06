@@ -115,6 +115,10 @@ class Done {
   ptr_t impl_;
 };
 
+
+// Callbacks must capture BlockingCounter object by value if they call Dec() function.
+// The reason is that if a thread preempts right after count_.fetch_sub returns 1 but before
+// ec_.notify was called, the object may be destroyed before ec_.notify is called.
 class BlockingCounter {
   class Impl {
    public:
