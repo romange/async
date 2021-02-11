@@ -42,7 +42,7 @@ DEFINE_uint32(n, 1000, "Number of requests per connection");
 DEFINE_uint32(c, 10, "Number of connections per thread");
 DEFINE_uint32(size, 1, "Message size, 0 for hardcoded 4 byte pings");
 DEFINE_uint32(backlog, 1024, "Accept queue length");
-
+DEFINE_uint32(p, 1, "pipelining factor");
 DEFINE_string(connect, "", "hostname or ip address to connect to in client mode");
 
 VarzQps ping_qps("ping-qps");
@@ -228,20 +228,29 @@ void Driver::Run(base::Histogram* dest) {
 
   auto lep = socket_->LocalEndpoint();
   CHECK(socket_->IsOpen());
+  asio::mutable_buffer msg_buf(msg.get(), FLAGS_size);
+
+  AsioStreamAdapter<> adapter(*socket_);
+  FiberSocketBase::expected_size_t es;
+
   for (unsigned i = 0; i < FLAGS_n; ++i) {
     auto start = absl::GetCurrentTimeNanos();
-    FiberSocketBase::expected_size_t es = socket_->Send(asio::buffer(msg.get(), FLAGS_size));
-    CHECK(es.has_value()) << es.error();
-    CHECK_EQ(es.value(), FLAGS_size);
+    for (size_t j = 0; j < FLAGS_p; ++j) {
+      es = socket_->Send(msg_buf);
+      CHECK(es.has_value()) << es.error();
+      CHECK_EQ(es.value(), FLAGS_size);
+    }
 
-    // DVLOG(1) << "Recv " << lep << " " << i;
-    es = socket_->Recv(vec, 1);
-    CHECK(es.has_value()) << "RecvError: " << es.error() << "/" << lep;
-    auto res2 = socket_->Recv(vec + 1, 1);
-    CHECK(res2.has_value()) << "Sock " << socket_->LocalEndpoint() << " " << i
-                            << res2.error().message();
-    CHECK_EQ(res2.value(), size_t(FLAGS_size));
+    for (size_t j = 0; j < FLAGS_p; ++j) {
+      // DVLOG(1) << "Recv " << lep << " " << i;
+      es = socket_->Recv(vec, 1);
+      CHECK(es.has_value()) << "RecvError: " << es.error() << "/" << lep;
 
+      system::error_code ec;
+      size_t sz = asio::read(adapter, msg_buf, ec);
+      CHECK(!ec) << ec;
+      CHECK_EQ(sz, FLAGS_size);
+    }
     uint64_t dur = absl::GetCurrentTimeNanos() - start;
     hist.Add(dur / 1000);
   }

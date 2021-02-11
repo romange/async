@@ -64,7 +64,7 @@ void FiberSocket::OnSetProactor() {
 
     auto cb = [this](uint32 mask, EvController* cntr) { Wakey(mask, cntr); };
 
-    arm_index_ = GetEv()->Arm(native_handle(), std::move(cb), EPOLLIN);
+    arm_index_ = GetEv()->Arm(native_handle(), std::move(cb), EPOLLIN | EPOLLET);
   }
 }
 
@@ -115,7 +115,7 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
   current_context_ = fibers::context::active();
 
   epoll_event ev;
-  ev.events = EPOLLIN | EPOLLOUT;
+  ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
   ev.data.u32 = arm_index_ + 1024;  // TODO: to fix it.
 
   CHECK_EQ(0, epoll_ctl(GetEv()->ev_loop_fd(), EPOLL_CTL_MOD, fd_, &ev));
@@ -143,7 +143,7 @@ auto FiberSocket::Connect(const endpoint_type& ep) -> error_code {
     }
     fd_ = -1;
   }
-  ev.events = EPOLLIN;
+  ev.events = EPOLLIN | EPOLLET;
   CHECK_EQ(0, epoll_ctl(GetEv()->ev_loop_fd(), EPOLL_CTL_MOD, fd_, &ev));
 
   return ec;
@@ -222,7 +222,7 @@ auto FiberSocket::RecvMsg(const msghdr& msg, int flags) -> expected_size_t {
     if (res == 0 || errno != EAGAIN) {
       break;
     }
-
+    DVLOG(1) << "Suspending " << fd << "/" << fibers_ext::short_id(current_context_);
     current_context_->suspend();
   }
 
@@ -249,7 +249,7 @@ auto FiberSocket::RecvMsg(const msghdr& msg, int flags) -> expected_size_t {
 }
 
 void FiberSocket::Wakey(uint32_t ev_mask, EvController* cntr) {
-  DVLOG(2) << "Wakey " << ev_mask;
+  DVLOG(2) << "Wakey " << fd_ << "/" << ev_mask;
 
   // It could be that we scheduled current_context_ already but has not switched to it yet.
   // Meanwhile a new event has arrived that triggered this callback again.
