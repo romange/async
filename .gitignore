@@ -1,6 +1,7 @@
 build/*
 build-*
 .vscode/*.db
+.vscode/settings.json
 third_party/*
 genfiles/*
 *.sublime-*
