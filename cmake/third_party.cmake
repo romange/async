@@ -244,6 +244,34 @@ add_third_party(
   LIB ${PERF_TOOLS_LIB}
 )
 
+set(MIMALLOC_INCLUDE_DIR ${THIRD_PARTY_LIB_DIR}/mimalloc/include)
+
+# asan interferes with mimalloc. See https://github.com/microsoft/mimalloc/issues/317
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(MI_OVERRIDE OFF)
+else()
+  set(MI_OVERRIDE ON)
+endif()
+add_third_party(mimalloc
+  GIT_REPOSITORY https://github.com/microsoft/mimalloc
+  GIT_TAG v2.0.0
+
+  # Add -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS=-O0 to debug -DMI_SECURE=ON
+  CMAKE_PASS_FLAGS "-DCMAKE_BUILD_TYPE=Release -DMI_BUILD_SHARED=OFF -DMI_BUILD_TESTS=OFF \
+                    -DMI_OVERRIDE=${MI_OVERRIDE} -DCMAKE_C_FLAGS=-g"
+
+  BUILD_COMMAND make -j4 mimalloc-static
+  INSTALL_COMMAND make install
+  COMMAND mkdir -p ${MIMALLOC_INCLUDE_DIR}
+  COMMAND sh -c "ln -s ${THIRD_PARTY_LIB_DIR}/mimalloc/lib/mimalloc-2.0/include/*.h -t ${MIMALLOC_INCLUDE_DIR}/ || true"
+  COMMAND sh -c "ln -s ${THIRD_PARTY_LIB_DIR}/mimalloc/libmi* ${THIRD_PARTY_LIB_DIR}/mimalloc/lib/libmimalloc.a || true"
+)
+
+add_third_party(jemalloc
+  URL https://github.com/jemalloc/jemalloc/releases/download/5.2.1/jemalloc-5.2.1.tar.bz2
+  PATCH_COMMAND ./autogen.sh
+  CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${THIRD_PARTY_LIB_DIR}/jemalloc --with-jemalloc-prefix=je_ --disable-libdl
+)
 
 add_third_party(pmr
   GIT_REPOSITORY https://github.com/romange/pmr.git
