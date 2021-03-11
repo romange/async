@@ -136,9 +136,9 @@ TEST_F(CuckooMapTest, CompactBug) {
 }
 
 
-constexpr int kLevel1 = 800;
-constexpr int kLevel2 = 1 << 14;
-constexpr int kLevel3 = 1 << 18;
+constexpr int kLevel1 = 1000;
+constexpr int kLevel2 = 10000;
+constexpr int kLevel3 = 100000;
 
 static void BM_InsertDenseSet(benchmark::State& state) {
   unsigned iters = state.range_x();
