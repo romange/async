@@ -1,5 +1,5 @@
 add_library(base arena.cc bits.cc dash.cc hash.cc histogram.cc init.cc logging.cc proc_util.cc
-            pthread_utils.cc varz_node.cc)
+            pthread_utils.cc varz_node.cc cuckoo_map.cc)
 
 cxx_link(base glog::glog gflags::gflags atomic rt # rt for timer_create etc.
          absl::strings absl::symbolize absl::failure_signal_handler TRDP::pmr TRDP::xxhash)
@@ -15,5 +15,6 @@ cxx_test(bits_test base LABELS CI)
 cxx_test(dash_test base LABELS CI)
 cxx_test(hash_test base LABELS CI)
 cxx_test(pod_array_test base LABELS CI)
+cxx_test(cuckoo_map_test base LABELS CI)
 cxx_test(histogram_test base LABELS CI)
 cxx_test(malloc_test base TRDP::mimalloc TRDP::jemalloc)
