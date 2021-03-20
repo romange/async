@@ -56,7 +56,9 @@ MainInitGuard::MainInitGuard(int* argc, char*** argv, uint32_t flags) {
 #else
   LOG(INFO) << (*argv)[0] << " running in debug mode.";
 #endif
-
+  std::set_terminate([] {
+    LOG(FATAL) << "Terminate handler called";
+  });
 
   __internal__::ModuleInitializer::RunFtors(true);
 }
