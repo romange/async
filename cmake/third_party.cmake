@@ -191,7 +191,7 @@ endif ()
 
 FetchContent_Declare(
   benchmark
-  URL https://github.com/google/benchmark/archive/v1.5.1.zip
+  URL https://github.com/google/benchmark/archive/v1.5.2.zip
 )
 
 FetchContent_GetProperties(benchmark)
@@ -205,13 +205,13 @@ endif ()
 
 
 FetchContent_Declare(
-    abseil_cpp
-    URL https://github.com/abseil/abseil-cpp/archive/20200923.zip
-    PATCH_COMMAND patch -p1 < "${CMAKE_CURRENT_LIST_DIR}/../patches/abseil-20200923.patch"
+  abseil_cpp
+  URL https://github.com/abseil/abseil-cpp/archive/20210324.0.zip
 )
 FetchContent_GetProperties(abseil_cpp)
 if(NOT abseil_cpp_POPULATED)
   FetchContent_Populate(abseil_cpp)
+  set(BUILD_TESTING OFF)
   add_subdirectory(${abseil_cpp_SOURCE_DIR} ${abseil_cpp_BINARY_DIR})
 endif()
 
@@ -234,9 +234,8 @@ endif()
 
 add_third_party(
   gperf
-  GIT_REPOSITORY https://github.com/gperftools/gperftools/
-  GIT_TAG gperftools-2.8
-  PATCH_COMMAND ./autogen.sh
+  URL https://github.com/gperftools/gperftools/releases/download/gperftools-2.9.1/gperftools-2.9.1.zip
+  PATCH_COMMAND autoreconf -i
   CONFIGURE_COMMAND <SOURCE_DIR>/configure --enable-frame-pointers --enable-static=yes
                     "CXXFLAGS=${THIRD_PARTY_CXX_FLAGS}"
                     --disable-deprecated-pprof --enable-aggressive-decommit-by-default
@@ -279,8 +278,7 @@ add_third_party(pmr
 
 add_third_party(
   xxhash
-  GIT_REPOSITORY https://github.com/Cyan4973/xxHash.git
-  GIT_TAG v0.8.0
+  URL https://github.com/Cyan4973/xxHash/archive/v0.8.0.zip
   SOURCE_SUBDIR cmake_unofficial
   CMAKE_PASS_FLAGS "-DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF"
 )
@@ -289,7 +287,7 @@ add_third_party(
 add_third_party(
   uring
   GIT_REPOSITORY https://github.com/axboe/liburing.git
-  GIT_TAG liburing-0.7
+  GIT_TAG liburing-2.0
   CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${THIRD_PARTY_LIB_DIR}/uring
   BUILD_IN_SOURCE 1
 )
