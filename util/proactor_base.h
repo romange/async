@@ -57,6 +57,10 @@ class ProactorBase {
     return thread_id_;
   }
 
+  uint64_t suspend_count() const {
+    return suspend_cnt_;
+  }
+
   static bool IsProactorThread() {
     return tl_info_.owner != nullptr;
   }
@@ -169,6 +173,7 @@ class ProactorBase {
   std::atomic_uint32_t tq_seq_{0}, tq_full_ev_{0};
   std::atomic_uint32_t tq_wakeup_ev_{0};
   std::atomic_uint32_t algo_notify_cnt_{0} /* how many times this FiberAlgo woke up others */;
+  uint64_t suspend_cnt_ = 0;
 
   // We use fu2 function to allow moveable semantics.
   using Fu2Fun =

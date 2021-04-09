@@ -248,12 +248,13 @@ void Proactor::Run() {
     if (tq_seq_.compare_exchange_weak(tq_seq, WAIT_SECTION_STATE, std::memory_order_acquire)) {
       if (is_stopped_)
         break;
-      DVLOG(2) << "wait_for_cqe";
+      DVLOG(1) << "wait_for_cqe";
       wait_for_cqe(&ring_, 1);
-      DVLOG(2) << "Woke up " << tq_seq_.load(std::memory_order_acquire);
+      DVLOG(1) << "Woke up " << tq_seq_.load(std::memory_order_acquire);
 
       tq_seq = 0;
       ++num_stalls;
+      ++suspend_cnt_;
 
       // Reset all except the LSB bit that signals that we need to switch to dispatch fiber.
       tq_seq_.fetch_and(1, std::memory_order_release);
