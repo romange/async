@@ -7,8 +7,8 @@
 #pragma once
 
 #include <absl/base/macros.h>
-#include <boost/fiber/context.hpp>
 
+#include <boost/fiber/context.hpp>
 
 namespace util {
 namespace fibers_ext {
@@ -29,14 +29,18 @@ class EventCount {
   wait_queue_t wait_queue_{};
 
  public:
-  EventCount() noexcept : val_(0) {}
+  EventCount() noexcept : val_(0) {
+  }
+
+  using cv_status = std::cv_status;
 
   class Key {
     friend class EventCount;
     EventCount* me_;
     uint32_t epoch_;
 
-    explicit Key(EventCount* me, uint32_t e) noexcept : me_(me), epoch_(e) {}
+    explicit Key(EventCount* me, uint32_t e) noexcept : me_(me), epoch_(e) {
+    }
 
     Key(const Key&) = delete;
 
@@ -47,7 +51,9 @@ class EventCount {
       me_->val_.fetch_sub(kAddWaiter, std::memory_order_relaxed);
     }
 
-    uint32_t epoch() const { return epoch_; }
+    uint32_t epoch() const {
+      return epoch_;
+    }
   };
 
   // Return true if a notification was made, false if no notification was issued.
@@ -55,6 +61,15 @@ class EventCount {
 
   bool notifyAll() noexcept;
 
+  /**
+   * Wait for condition() to become true.  Will clean up appropriately if
+   * condition() throws. Returns true if had to preempt using wait_queue.
+   */
+  template <typename Condition> bool await(Condition condition);
+  template <typename Condition>
+  cv_status await_until(Condition condition, const std::chrono::steady_clock::time_point& tp);
+
+  // Advanced API, most use-cases will requie await function.
   Key prepareWait() noexcept {
     uint64_t prev = val_.fetch_add(kAddWaiter, std::memory_order_acq_rel);
     return Key(this, prev >> kEpochShift);
@@ -62,11 +77,7 @@ class EventCount {
 
   void wait(uint32_t epoch) noexcept;
 
-  /**
-   * Wait for condition() to become true.  Will clean up appropriately if
-   * condition() throws. Returns true if had to preempt using wait_queue.
-   */
-  template <typename Condition> bool await(Condition condition);
+  cv_status wait_until(uint32_t epoch, const std::chrono::steady_clock::time_point& tp) noexcept;
 
  private:
   friend class Key;
@@ -168,6 +179,38 @@ inline void EventCount::wait(uint32_t epoch) noexcept {
   }
 }
 
+inline std::cv_status EventCount::wait_until(
+    uint32_t epoch, const std::chrono::steady_clock::time_point& tp) noexcept {
+  auto* active_ctx = ::boost::fibers::context::active();
+  cv_status status = cv_status::no_timeout;
+
+  // atomically call lt.unlock() and block on *this
+  // store this fiber in waiting-queue
+  spinlock_lock_t lk{wait_queue_splk_};
+  BOOST_ASSERT(!active_ctx->wait_is_linked());
+
+  if ((val_.load(std::memory_order_relaxed) >> kEpochShift) == epoch) {
+    // atomically call lt.unlock() and block on *this
+    // store this fiber in waiting-queue
+    active_ctx->wait_link(wait_queue_);
+    active_ctx->twstatus.store(reinterpret_cast<std::intptr_t>(this), std::memory_order_release);
+
+    // suspend this fiber
+    if (!active_ctx->wait_until(tp, lk)) {
+      status = cv_status::timeout;
+      // relock local lk
+      lk.lock();
+      // remove from waiting-queue
+      wait_queue_.remove(*active_ctx);
+      // unlock local lk
+      lk.unlock();
+    }
+  }
+  // post-conditions
+  BOOST_ASSERT(!active_ctx->wait_is_linked());
+  return status;
+}
+
 // Returns true if had to preempt, false if no preemption happenned.
 template <typename Condition> bool EventCount::await(Condition condition) {
   if (condition())
@@ -177,7 +220,7 @@ template <typename Condition> bool EventCount::await(Condition condition) {
   // noexcept, Key destructor makes sure to cancelWait state when exiting the function.
   bool preempt = false;
   while (true) {
-    Key key = prepareWait(); // Key destructor restores back the sequence counter.
+    Key key = prepareWait();  // Key destructor restores back the sequence counter.
     if (condition()) {
       break;
     }
@@ -185,6 +228,25 @@ template <typename Condition> bool EventCount::await(Condition condition) {
     wait(key.epoch());
   }
   return preempt;
+}
+
+template <typename Condition>
+std::cv_status EventCount::await_until(Condition condition,
+                                       const std::chrono::steady_clock::time_point& tp) {
+  if (condition())
+    return std::cv_status::no_timeout;  // fast path
+
+  cv_status status = std::cv_status::no_timeout;
+  while (true) {
+    Key key = prepareWait();  // Key destructor restores back the sequence counter.
+    if (condition()) {
+      break;
+    }
+    status = wait_until(key.epoch(), tp);
+    if (status == std::cv_status::timeout)
+      break;
+  }
+  return status;
 }
 
 }  // namespace fibers_ext

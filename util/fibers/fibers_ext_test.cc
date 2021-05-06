@@ -9,6 +9,8 @@
 #include "util/uring/uring_fiber_algo.h"
 
 using namespace boost;
+using namespace std;
+using namespace chrono_literals;
 
 namespace util {
 using namespace uring;
@@ -43,6 +45,12 @@ TEST_F(FibersTest, EventCount) {
   signal = true;
   ec.notify();
   fb.join();
+}
+
+TEST_F(FibersTest, EventCountTimeout) {
+  EventCount ec;
+  std::chrono::steady_clock::time_point tp = std::chrono::steady_clock::now() + 5ms;
+  EXPECT_EQ(std::cv_status::timeout, ec.await_until([] { return false;}, tp));
 }
 
 TEST_F(FibersTest, SpuriousNotify) {
