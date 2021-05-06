@@ -6,7 +6,7 @@ apt install -y cmake libunwind-dev zip libfl-dev bison ninja-build autoconf-arch
 apt install -y curl libxml2-dev
 g++ --version
 
-BVER=1.74.0
+BVER=1.76.0
 BOOST=boost_${BVER//./_}   # replace all . with _
 
 # For sake of boost install we always use g++.
@@ -15,7 +15,7 @@ export CXX=g++
 install_boost() {
     mkdir -p /tmp/boost && pushd /tmp/boost
     if ! [ -d $BOOST ]; then
-      url="http://dl.bintray.com/boostorg/release/${BVER}/source/$BOOST.tar.bz2"
+      url="https://boostorg.jfrog.io/artifactory/main/release/${BVER}/source/$BOOST.tar.bz2"
       echo "Downloading from $url"
       if ! [ -e $BOOST.tar.bz2 ]; then wget -nv ${url} -O $BOOST.tar.bz2; fi
 
