@@ -30,9 +30,6 @@ template <typename Q> class QueueTraits;
   StartClosing();
 */
 template <typename T, typename Queue = folly::ProducerConsumerQueue<T>> class SimpleChannel {
-  typedef ::boost::fibers::context::wait_queue_t wait_queue_t;
-  using spinlock_lock_t = ::boost::fibers::detail::spinlock_lock;
-
   using QTraits = detail::QueueTraits<Queue>;
 
  public:

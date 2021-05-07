@@ -7,8 +7,12 @@
 #pragma once
 
 #include <absl/base/macros.h>
-
 #include <boost/fiber/context.hpp>
+#include <boost/version.hpp>
+
+#if BOOST_VERSION >= 107600
+  #define USE_WAKER 1
+#endif
 
 namespace util {
 namespace fibers_ext {
@@ -21,7 +25,12 @@ namespace fibers_ext {
 // which means it can be used from the io_context (ring0) fiber.
 class EventCount {
   using spinlock_lock_t = ::boost::fibers::detail::spinlock_lock;
+
+#if USE_WAKER
+  using wait_queue_t = ::boost::fibers::wait_queue;
+#else
   using wait_queue_t = ::boost::fibers::context::wait_queue_t;
+#endif
 
   //! Please note that we must use spinlock_lock_t because we suspend and unlock atomically
   // and fibers lib supports only this type for that.
@@ -82,11 +91,13 @@ class EventCount {
  private:
   friend class Key;
 
+#ifndef USE_WAKER
   static bool should_switch(::boost::fibers::context* ctx, std::intptr_t expected) {
     return ctx->twstatus.compare_exchange_strong(expected, static_cast<std::intptr_t>(-1),
                                                  std::memory_order_acq_rel) ||
            expected == 0;
   }
+#endif
 
   EventCount(const EventCount&) = delete;
   EventCount(EventCount&&) = delete;
@@ -112,7 +123,9 @@ inline bool EventCount::notify() noexcept {
   uint64_t prev = val_.fetch_add(kAddEpoch, std::memory_order_release);
 
   if (ABSL_PREDICT_FALSE(prev & kWaiterMask)) {
+#ifndef USE_WAKER
     auto* active_ctx = ::boost::fibers::context::active();
+#endif
 
     /*
     lk makes sure that when a waiting thread is entered the critical section in
@@ -121,6 +134,10 @@ inline bool EventCount::notify() noexcept {
     thread enters WAIT state and thus the notification is missed.
     */
     spinlock_lock_t lk{wait_queue_splk_};
+
+#if USE_WAKER
+    wait_queue_.notify_one();
+#else
     while (!wait_queue_.empty()) {
       auto* ctx = &wait_queue_.front();
       wait_queue_.pop_front();
@@ -133,6 +150,7 @@ inline bool EventCount::notify() noexcept {
       }
     }
 
+#endif
     return true;
   }
   return false;
@@ -142,9 +160,14 @@ inline bool EventCount::notifyAll() noexcept {
   uint64_t prev = val_.fetch_add(kAddEpoch, std::memory_order_release);
 
   if (ABSL_PREDICT_FALSE(prev & kWaiterMask)) {
+#ifndef USE_WAKER
     auto* active_ctx = ::boost::fibers::context::active();
+#endif
 
     spinlock_lock_t lk{wait_queue_splk_};
+#if USE_WAKER
+    wait_queue_.notify_all();
+#else
     wait_queue_t tmp;
     tmp.swap(wait_queue_);
     lk.unlock();
@@ -158,6 +181,7 @@ inline bool EventCount::notifyAll() noexcept {
         active_ctx->schedule(ctx);
       }
     }
+#endif
   }
 
   return false;
@@ -169,6 +193,9 @@ inline void EventCount::wait(uint32_t epoch) noexcept {
 
   spinlock_lock_t lk{wait_queue_splk_};
   if ((val_.load(std::memory_order_relaxed) >> kEpochShift) == epoch) {
+#if USE_WAKER
+    wait_queue_.suspend_and_wait(lk, active_ctx);
+#else
     // atomically call lt.unlock() and block on *this
     // store this fiber in waiting-queue
     active_ctx->wait_link(wait_queue_);
@@ -176,6 +203,7 @@ inline void EventCount::wait(uint32_t epoch) noexcept {
 
     // suspend this fiber
     active_ctx->suspend(lk);
+#endif
   }
 }
 
@@ -187,14 +215,17 @@ inline std::cv_status EventCount::wait_until(
   // atomically call lt.unlock() and block on *this
   // store this fiber in waiting-queue
   spinlock_lock_t lk{wait_queue_splk_};
-  BOOST_ASSERT(!active_ctx->wait_is_linked());
 
   if ((val_.load(std::memory_order_relaxed) >> kEpochShift) == epoch) {
+#if USE_WAKER
+    if (!wait_queue_.suspend_and_wait_until(lk, active_ctx, tp)) {
+      status = cv_status::timeout;
+    }
+#else
     // atomically call lt.unlock() and block on *this
     // store this fiber in waiting-queue
     active_ctx->wait_link(wait_queue_);
     active_ctx->twstatus.store(reinterpret_cast<std::intptr_t>(this), std::memory_order_release);
-
     // suspend this fiber
     if (!active_ctx->wait_until(tp, lk)) {
       status = cv_status::timeout;
@@ -205,12 +236,10 @@ inline std::cv_status EventCount::wait_until(
       // unlock local lk
       lk.unlock();
     }
+#endif
   }
-  // post-conditions
-  BOOST_ASSERT(!active_ctx->wait_is_linked());
   return status;
 }
-
 // Returns true if had to preempt, false if no preemption happenned.
 template <typename Condition> bool EventCount::await(Condition condition) {
   if (condition())
@@ -249,5 +278,10 @@ std::cv_status EventCount::await_until(Condition condition,
   return status;
 }
 
+#ifdef USE_WAKER
+ #undef USE_WAKER
+#endif
+
 }  // namespace fibers_ext
 }  // namespace util
+
