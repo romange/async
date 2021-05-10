@@ -167,6 +167,7 @@ if (NOT glog_POPULATED)
     set(HAVE_RWLOCK OFF  CACHE BOOL "")
   endif()
 
+    set(WITH_GTEST OFF CACHE BOOL "")
     # We trick glog into compiling with gflags.
     set(HAVE_LIB_GFLAGS ON CACHE BOOL "")
     set(WITH_GFLAGS OFF CACHE BOOL "")
