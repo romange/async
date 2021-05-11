@@ -218,8 +218,7 @@ if(NOT abseil_cpp_POPULATED)
 endif()
 
 
-# set(Boost_DEBUG ON)
-find_package(Boost 1.71.0 REQUIRED COMPONENTS fiber context system)
+find_package(Boost 1.71.0 REQUIRED COMPONENTS context system fiber)
 Message(STATUS "Found Boost ${Boost_LIBRARY_DIRS} ${Boost_LIB_VERSION} ${Boost_VERSION}")
 
 add_definitions(-DBOOST_BEAST_SEPARATE_COMPILATION -DBOOST_ASIO_SEPARATE_COMPILATION)
