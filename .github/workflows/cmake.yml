@@ -38,6 +38,6 @@ jobs:
     - name: Build & Test
       working-directory: ${{github.workspace}}/build
       run: |
-          # echo "${{ env.TESTS_LIST }}"
-          ninja ${{ env.TESTS_LIST }} -k 10
+          # echo ${env.TESTS_LIST }
+          ninja $(echo ${{ env.TESTS_LIST }}) -k 10
           CTEST_OUTPUT_ON_FAILURE=1 ctest -L CI
