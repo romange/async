@@ -2,6 +2,8 @@
 
 =====
 
+[![ci-tests](https://github.com/romange/async/actions/workflows/ci.yml/badge.svg)](https://github.com/romange/async/actions/workflows/ci.yml)
+
 Async is a set of c++ primitives that allows you efficient and rapid development
 in c++17 on linux systems. The focus is mostly for backend development, data processing etc.
 
