@@ -168,6 +168,8 @@ if (NOT glog_POPULATED)
   endif()
 
     set(WITH_GTEST OFF CACHE BOOL "")
+    set(BUILD_TESTING OFF CACHE BOOL "")
+
     # We trick glog into compiling with gflags.
     set(HAVE_LIB_GFLAGS ON CACHE BOOL "")
     set(WITH_GFLAGS OFF CACHE BOOL "")
@@ -175,7 +177,6 @@ if (NOT glog_POPULATED)
 
     set_property(TARGET glog APPEND PROPERTY
                  INCLUDE_DIRECTORIES $<TARGET_PROPERTY:gflags,INTERFACE_INCLUDE_DIRECTORIES>)
-    execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink "${glog_SOURCE_DIR}/src/glog/log_severity.h" "${glog_BINARY_DIR}/glog/log_severity.h")
 endif()
 
 

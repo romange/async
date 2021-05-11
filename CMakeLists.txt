@@ -4,7 +4,7 @@ set(PACKAGE_NAME    "async")
 set(PROJECT_CONTACT romange@gmail.com)
 
 project(${PACKAGE_NAME} C CXX)
-
+enable_testing()
 
 if(NOT "${CMAKE_SYSTEM_NAME}" STREQUAL "Linux")
   message(FATAL_ERROR "Requires running on linux, found ${CMAKE_SYSTEM_NAME} instead")

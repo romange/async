@@ -12,29 +12,36 @@
 #include <boost/beast/http/write.hpp>
 
 #include "base/logging.h"
-#include "util/asio/fiber_socket.h"
-#include "util/asio/yield.h"
+#include "util/asio_stream_adapter.h"
+#include "util/fiber_socket_base.h"
+#include "util/proactor_base.h"
 
 namespace util {
 namespace http {
 
-using fibers_ext::yield;
 using namespace boost;
+using namespace std;
 
 namespace h2 = beast::http;
 
-Client::Client(IoContext* io_context) : io_context_(*io_context) {}
+Client::Client(ProactorBase* proactor) : proactor_(proactor) {}
 
 Client::~Client() {}
 
-system::error_code Client::Connect(StringPiece host, StringPiece service) {
-  socket_.reset(
-      new FiberSyncSocket(strings::AsString(host), strings::AsString(service), &io_context_));
+std::error_code Client::Connect(StringPiece host, StringPiece service) {
+  uint32_t port;
+  CHECK(absl::SimpleAtoi(service, &port));
+  CHECK_LT(port, 1u << 16);
 
-  return socket_->ClientWaitToConnect(connect_timeout_ms_);
+
+  auto address = asio::ip::make_address(host);
+  FiberSocketBase::endpoint_type ep{address, uint16_t(port)};
+  socket_.reset(proactor_->CreateSocket());
+
+  return socket_->Connect(ep);
 }
 
-::boost::system::error_code Client::Send(Verb verb, StringPiece url, StringPiece body,
+std::error_code Client::Send(Verb verb, StringPiece url, StringPiece body,
                                          Response* response) {
   // Set the URL
   h2::request<h2::string_body> req{verb, boost::string_view(url.data(), url.size()), 11};
@@ -48,8 +55,10 @@ system::error_code Client::Connect(StringPiece host, StringPiece service) {
 
   system::error_code ec;
 
+  AsioStreamAdapter<> adapter(*socket_);
+
   // Send the HTTP request to the remote host.
-  h2::write(*socket_, req, ec);
+  h2::write(adapter, req, ec);
   if (ec) {
     VLOG(1) << "Error " << ec;
     return ec;
@@ -58,7 +67,7 @@ system::error_code Client::Connect(StringPiece host, StringPiece service) {
   // This buffer is used for reading and must be persisted
   beast::flat_buffer buffer;
 
-  h2::read(*socket_, buffer, *response, ec);
+  h2::read(adapter, buffer, *response, ec);
   VLOG(2) << "Resp: " << *response;
 
   return ec;
@@ -66,14 +75,14 @@ system::error_code Client::Connect(StringPiece host, StringPiece service) {
 
 void Client::Shutdown() {
   if (socket_) {
-    system::error_code ec;
-    socket_->Shutdown(ec);
+    std::error_code ec;
+    socket_->Shutdown(SHUT_RDWR);
     socket_.reset();
   }
 }
 
 bool Client::IsConnected() const {
-  return socket_ && socket_->is_open() && !socket_->status();
+  return socket_ && socket_->IsOpen();
 }
 
 }  // namespace http

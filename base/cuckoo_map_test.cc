@@ -65,7 +65,7 @@ TEST_F(CuckooMapTest, RandomInput) {
   CuckooMap<uint64> m;
   m.SetEmptyKey(0);
   const uint32 kLength = 100000;
-  for (int k = 0; k < kLength; ++k) {
+  for (uint32_t k = 0; k < kLength; ++k) {
     uint64 v = dre();
     while (v ==0 || m.find(v) != CuckooMapTable::npos) {
       v = dre();
@@ -97,11 +97,11 @@ TEST_F(CuckooMapTest, ReserveSizes) {
 }
 
 TEST_F(CuckooMapTest, Compact) {
-  for (int iter = 17; iter <= FLAGS_shrink_items; ++iter) {
+  for (uint64_t iter = 17; iter <= unsigned(FLAGS_shrink_items); ++iter) {
     LOG(INFO) << "Iter " << iter;
     CuckooMap<uint64> m;
     m.SetEmptyKey(0);
-    for (uint64 k = 1; k < iter; ++k) {
+    for (uint64_t k = 1; k < iter; ++k) {
       m.Insert(k * k, k);
     }
 
@@ -141,7 +141,7 @@ constexpr int kLevel2 = 10000;
 constexpr int kLevel3 = 100000;
 
 static void BM_InsertDenseSet(benchmark::State& state) {
-  unsigned iters = state.range_x();
+  unsigned iters = state.range(0);
 
   while (state.KeepRunning()) {
     ::absl::flat_hash_set<uint64, cityhash32> set;
@@ -174,7 +174,7 @@ struct TestHash {
 };
 
 static void BM_InsertDenseString(benchmark::State& state) {
-  unsigned iters = state.range_x();
+  unsigned iters = state.range(0);
   std::vector<StringWrapper> vals(iters);
 
   while (state.KeepRunning()) {
@@ -193,7 +193,7 @@ static void BM_InsertDenseString(benchmark::State& state) {
 BENCHMARK(BM_InsertDenseString)->Arg(kLevel1)->Arg(kLevel2)->Arg(kLevel3);
 
 static void BM_InsertCuckoo(benchmark::State& state) {
-  unsigned iters = state.range_x();
+  unsigned iters = state.range(0);
   while (state.KeepRunning()) {
   CuckooMapTable m(0, int(iters*1.3));
   m.SetEmptyKey(0);
@@ -207,7 +207,7 @@ static void BM_InsertCuckoo(benchmark::State& state) {
 BENCHMARK(BM_InsertCuckoo)->Arg(kLevel1)->Arg(kLevel2)->Arg(kLevel3);
 
 static void BM_InsertUnorderedSet(benchmark::State& state) {
-  unsigned iters = state.range_x();
+  unsigned iters = state.range(0);
   while (state.KeepRunning()) {
     std::unordered_set<uint32, cityhash32> set;
     for (uint64 i = 0; i < iters; ++i) {
@@ -218,10 +218,10 @@ static void BM_InsertUnorderedSet(benchmark::State& state) {
 BENCHMARK(BM_InsertUnorderedSet)->Arg(kLevel1)->Arg(kLevel2)->Arg(kLevel3);
 
 static void BM_FindCuckooSetSeq(benchmark::State& state) {
-  unsigned iters = state.range_x();
+  unsigned iters = state.range(0);
   CuckooSet m(unsigned(iters*1.3));
   m.SetEmptyKey(0);
-  for (int i = 0; i < iters; ++i) {
+  for (unsigned i = 0; i < iters; ++i) {
     m.Insert(i + 1);
   }
   LOG(INFO) << "BM_FindCuckooSetSeq: " << iters << " " << m.bytes_allocated();
@@ -240,12 +240,12 @@ BENCHMARK(BM_FindCuckooSetSeq)->Arg(kLevel1)->Arg(kLevel2)->Arg(kLevel3);
 
 static void BM_FindUnorderedSet(benchmark::State& state) {
   std::unordered_set<uint64, cityhash32> set;
-  unsigned iters = state.range_x();
+  unsigned iters = state.range(0);
   for (unsigned i = 0; i < iters; ++i) {
     set.insert(i + 1);
   }
   while (state.KeepRunning()) {
-    for (int i = 0; i < iters; ++i) {
+    for (unsigned i = 0; i < iters; ++i) {
       sink_result(set.find(i + 1));
     }
   }
@@ -255,13 +255,13 @@ BENCHMARK(BM_FindUnorderedSet)->Arg(kLevel1)->Arg(kLevel2);
 
 static void BM_FindDenseSetSeq(benchmark::State& state) {
   absl::flat_hash_set<uint64, cityhash32> set;
-  unsigned iters = state.range_x();
-  for (int i = 0; i < iters; ++i) {
+  unsigned iters = state.range(0);
+  for (unsigned i = 0; i < iters; ++i) {
     set.insert(i + 1);
   }
   set.rehash(0);
   while (state.KeepRunning()) {
-  for (int i = 0; i < iters; ++i) {
+  for (unsigned i = 0; i < iters; ++i) {
       sink_result(set.find(i + 1));
       sink_result(set.find(iters + i + 1));
       sink_result(set.find(2*iters + i + 1));
@@ -275,15 +275,15 @@ static void BM_FindDenseSetRandom(benchmark::State& state) {
   absl::flat_hash_set<uint64, cityhash32> set;
 
   std::mt19937_64 dre(10);
-  unsigned iters = state.range_x();
+  unsigned iters = state.range(0);
   std::vector<uint64> vals(iters, 0);
-  for (int i = 0; i < iters; ++i) {
+  for (unsigned i = 0; i < iters; ++i) {
     vals[i] = dre();
     if (vals[i] == 0) vals[i] = 1;
     set.insert(vals[i]);
   }
   while (state.KeepRunning()) {
-    for (int i = 0; i < iters; ++i) {
+    for (unsigned i = 0; i < iters; ++i) {
       sink_result(set.find(vals[i]));
       sink_result(set.find(i + 1));
       sink_result(set.find(iters + i + 1));
@@ -293,19 +293,19 @@ static void BM_FindDenseSetRandom(benchmark::State& state) {
 BENCHMARK(BM_FindDenseSetRandom)->Arg(kLevel1)->Arg(kLevel2)->Arg(kLevel3);
 
 static void BM_FindCuckooRandom(benchmark::State& state) {
-  unsigned iters = state.range_x();
+  unsigned iters = state.range(0);
   CuckooMapTable m(0, unsigned(iters*1.3));
   m.SetEmptyKey(0);
   std::mt19937_64 dre(20);
 
   std::vector<uint64> vals(iters, 0);
-  for (int i = 0; i < iters; ++i) {
+  for (unsigned i = 0; i < iters; ++i) {
     vals[i] = dre();
     if (vals[i] == 0) vals[i] = 1;
     m.Insert(vals[i], nullptr);
   }
   while (state.KeepRunning()) {
-    for (int i = 0; i < iters; ++i) {
+    for (unsigned i = 0; i < iters; ++i) {
       sink_result(m.find(vals[i])); // to simulate hits
       // to simulate 66% of misses
       sink_result(m.find(i + 1));
@@ -316,20 +316,20 @@ static void BM_FindCuckooRandom(benchmark::State& state) {
 BENCHMARK(BM_FindCuckooRandom)->Arg(kLevel1)->Arg(kLevel2)->Arg(kLevel3);
 
 static void BM_FindCuckooRandomAfterCompact(benchmark::State& state) {
-  unsigned iters = state.range_x();
+  unsigned iters = state.range(0);
   CuckooMapTable m(0, unsigned(iters*1.3));
   m.SetEmptyKey(0);
   std::mt19937_64 dre(20);
 
   std::vector<uint64> vals(iters, 0);
-  for (int i = 0; i < iters; ++i) {
+  for (unsigned i = 0; i < iters; ++i) {
     vals[i] = dre();
     if (vals[i] == 0) vals[i] = 1;
     m.Insert(vals[i], nullptr);
   }
   CHECK(m.Compact(1.05));
   while (state.KeepRunning()) {
-    for (int i = 0; i < iters; ++i) {
+    for (unsigned i = 0; i < iters; ++i) {
       sink_result(m.find(vals[i])); // to simulate hits
       sink_result(m.find(i + 1));  // to simulate misses
     }
@@ -338,12 +338,12 @@ static void BM_FindCuckooRandomAfterCompact(benchmark::State& state) {
 BENCHMARK(BM_FindCuckooRandomAfterCompact)->Arg(kLevel1)->Arg(kLevel2)->Arg(kLevel3);
 
 static void BM_CuckooCompact(benchmark::State& state) {
-  unsigned iters = state.range_x();
+  unsigned iters = state.range(0);
   CuckooMapTable m(0, unsigned(iters*1.3));
   m.SetEmptyKey(0);
   std::mt19937_64 dre(20);
   std::vector<uint64> vals(iters, 0);
-  for (int i = 0; i < iters; ++i) {
+  for (unsigned i = 0; i < iters; ++i) {
     vals[i] = dre();
     if (vals[i] == 0) vals[i] = 1;
     m.Insert(vals[i], nullptr);
