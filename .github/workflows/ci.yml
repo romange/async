@@ -1,4 +1,4 @@
-name: CMake
+name: ci-tests
 
 on:
   push:
