@@ -6,6 +6,7 @@
 #include "util/fibers/fiberqueue_threadpool.h"
 #include "util/fibers/simple_channel.h"
 #include "util/uring/uring_pool.h"
+#include "util/epoll/ev_pool.h"
 #include "util/uring/uring_fiber_algo.h"
 
 using namespace boost;
@@ -85,14 +86,13 @@ TEST_F(FibersTest, FQTP) {
 }
 
 TEST_F(FibersTest, FiberQueue) {
-  uring::UringPool pool{16, 1};
+  epoll::EvPool pool{1};
   pool.Run();
 
   ProactorBase* proactor = pool.GetNextProactor();
   FiberQueue fq{32};
 
   auto fiber = proactor->LaunchFiber([&] {
-    // this_fiber::properties<UringFiberAlgo>().SetNiceLevel(1);
     fq.Run();
   });
 

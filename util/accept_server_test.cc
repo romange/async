@@ -13,6 +13,7 @@
 #include "util/listener_interface.h"
 #include "util/uring/fiber_socket.h"
 #include "util/uring/uring_pool.h"
+#include "util/epoll/ev_pool.h"
 
 namespace util {
 namespace uring {
@@ -73,13 +74,16 @@ class AcceptServerTest : public testing::Test {
 
   std::unique_ptr<ProactorPool> pp_;
   std::unique_ptr<AcceptServer> as_;
-  FiberSocket client_sock_;
+  std::unique_ptr<FiberSocketBase> client_sock_;
 };
 
 void AcceptServerTest::SetUp() {
   const uint16_t kPort = 1234;
-
-  UringPool* up = new UringPool(16, 2);
+#ifdef USE_URING
+  ProactorPool* up = new UringPool(16, 2);
+#else
+  ProactorPool* up = new epoll::EvPool(2);
+#endif
   pp_.reset(up);
   pp_->Run();
 
@@ -87,19 +91,20 @@ void AcceptServerTest::SetUp() {
   as_->AddListener(kPort, new TestListener);
   as_->Run();
 
-  client_sock_.SetProactor((Proactor*)pp_->GetNextProactor());
+  ProactorBase* pb = pp_->GetNextProactor();
+  client_sock_.reset(pb->CreateSocket());
   auto address = asio::ip::make_address("127.0.0.1");
   asio::ip::tcp::endpoint ep{address, kPort};
 
-  client_sock_.proactor()->AwaitBlocking([&] {
-    FiberSocket::error_code ec = client_sock_.Connect(ep);
+  pb->AwaitBlocking([&] {
+    FiberSocket::error_code ec = client_sock_->Connect(ep);
     CHECK(!ec) << ec;
   });
 }
 
-void RunClient(FiberSocket* fs, BlockingCounter* bc) {
+void RunClient(FiberSocketBase* fs, BlockingCounter* bc) {
   LOG(INFO) << ": Ping-client started";
-  AsioStreamAdapter<FiberSocket> asa(*fs);
+  AsioStreamAdapter<> asa(*fs);
 
   ASSERT_TRUE(fs->IsOpen());
 
@@ -115,7 +120,7 @@ void RunClient(FiberSocket* fs, BlockingCounter* bc) {
 
 TEST_F(AcceptServerTest, Basic) {
   fibers_ext::BlockingCounter bc(1);
-  client_sock_.proactor()->AsyncFiber(&RunClient, &client_sock_, &bc);
+  client_sock_->proactor()->AsyncFiber(&RunClient, client_sock_.get(), &bc);
 
   bc.Wait();
 }

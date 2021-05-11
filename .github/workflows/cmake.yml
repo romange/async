@@ -31,14 +31,13 @@ jobs:
       run: |
           cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -GNinja
           cd ${{github.workspace}}/build 
-          echo 'TESTS_LIST<<EOF' >> $GITHUB_ENV
-          ctest -L CI -N | grep "Test.*#" | cut -f2 -d:| sort >> $GITHUB_ENV
-          echo 'EOF' >> $GITHUB_ENV
+          echo -n 'TESTS_LIST="' >> $GITHUB_ENV
+          ctest -L CI -N | grep "Test.*#" | cut -f2 -d:| sort | tr -d '\n' >> $GITHUB_ENV
+          echo '"' >> $GITHUB_ENV
           
-
     - name: Build & Test
       working-directory: ${{github.workspace}}/build
       run: |
-          echo "${{ env.TESTS_LIST }}"
-          CTEST_OUTPUT_ON_FAILURE=1 ninja check
-          # ninja ${tests_list} -k 10  
+          # echo "${{ env.TESTS_LIST }}"
+          ninja ${{ env.TESTS_LIST }} -k 10
+          CTEST_OUTPUT_ON_FAILURE=1 ctest -L CI
