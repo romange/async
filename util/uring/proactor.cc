@@ -122,11 +122,13 @@ void Proactor::Run() {
 
   constexpr size_t kBatchSize = 64;
   struct io_uring_cqe cqes[kBatchSize];
-  uint32_t tq_seq = 0;
   uint64_t num_stalls = 0, cqe_syscalls = 0, cqe_fetches = 0, loop_cnt = 0;
-
+  uint32_t tq_seq = 0;
   uint32_t spin_loops = 0, num_task_runs = 0, task_interrupts = 0;
   Tasklet task;
+
+  bool suspend_until_called = false;
+  bool should_suspend = false;
 
   while (true) {
     ++loop_cnt;
@@ -188,19 +190,26 @@ void Proactor::Run() {
       tq_seq_.fetch_and(~1, std::memory_order_relaxed);
       tq_seq &= ~1;
       this_fiber::yield();
+      DVLOG(2) << "this_fiber::yield_end " << spin_loops;
+
+      // we preempted without passing through suspend_until.
+      suspend_until_called = false;
     }
 
-    if (sched->has_ready_fibers()) {
+    if (should_suspend || sched->has_ready_fibers()) {
       // Suspend this fiber until others will run and get blocked.
       // Eventually UringFiberAlgo will resume back this fiber in suspend_until
       // function.
-      DVLOG(2) << "Suspend ioloop";
+      DVLOG(2) << "Suspend ioloop " << should_suspend;
       uint64_t now = GetClockNanos();
       tl_info_.monotonic_time = now;
-      scheduler_->SuspendMain(now);
 
-      DVLOG(2) << "Resume ioloop";
-
+      // In general, SuspendIoLoop would always return true since it should execute all
+      // fibers till exhaustion. However, since our scheduler can truncate the execution and
+      // switch back to ioloop, the control may resume without visiting in suspend_until().
+      suspend_until_called = scheduler_->SuspendIoLoop(now);
+      should_suspend = false;
+      DVLOG(2) << "Resume ioloop " << suspend_until_called;
       continue;
     }
 
@@ -227,8 +236,21 @@ void Proactor::Run() {
       continue;
     }
 
+    // Dispatcher runs the scheduling loop. Every time a fiber preempts it awakens dispatcher
+    // so that when that we eventually get to the dispatcher fiber again. dispatcher calls suspend_until()
+    // only when pick_next returns null, i.e. there are no active fibers to run.
+    // Therefore we should not block on I/O before making sure that dispatcher has run with all
+    // fibers being suspended so that dispatcher could call suspend_until in order to update timeout if needed.
+    // We track whether suspend_until was called since the last preemption of io-loop and
+    // if not, we suspend this fiber to allow the dispatch fiber to call suspend_until().
+    if (!suspend_until_called) {
+      should_suspend = true;
+      continue;
+    }
+
     // Lets spin a bit to make a system a bit more responsive.
     if (++spin_loops < kSpinLimit) {
+      DVLOG(3) << "spin_loops " << spin_loops;
       // We should not spin too much using sched_yield or it burns a fuckload of cpu.
       continue;
     }
@@ -236,7 +258,7 @@ void Proactor::Run() {
     spin_loops = 0;  // Reset the spinning.
 
     DCHECK_EQ(0U, tq_seq & 1) << tq_seq;
-    // TODO: to check this - this_fiber::yield();  // Allow dispatcher to run before we block.
+    DCHECK(suspend_until_called);
 
     /**
      * If tq_seq_ has changed since it was cached into tq_seq, then
@@ -471,6 +493,7 @@ void Proactor::SchedulePeriodic(uint32_t id, std::shared_ptr<PeriodicItem> item)
 }
 
 void Proactor::PeriodicCb(IoResult res, int64_t task_id, std::shared_ptr<PeriodicItem> item) {
+
   if (res == -ECANCELED) {
     return;
   }

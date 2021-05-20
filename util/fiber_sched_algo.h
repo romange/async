@@ -55,13 +55,14 @@ class FiberSchedAlgo : public ::boost::fibers::algo::algorithm_with_properties<F
   // In our case, "sleeping" means - might stuck the wait function waiting for completion events.
   void notify() noexcept final;
 
-  void SuspendMain(uint64_t now);
+  // Returns true if suspend_until has been called before resuming back to ioloop.
+  bool SuspendIoLoop(uint64_t now);
 
  protected:
   virtual void SuspendWithTimer(const time_point& tp) noexcept = 0;
 
   bool MainHasSwitched() const {
-    return (mask_ & (MAIN_LOOP_SUSPEND | MAIN_YIELDED)) == (MAIN_LOOP_SUSPEND | MAIN_YIELDED);
+    return (mask_ & (IOLOOP_SUSPENDED | IOLOOP_YIELDED)) == (IOLOOP_SUSPENDED | IOLOOP_YIELDED);
   }
 
   ProactorBase* proactor_;
@@ -72,7 +73,12 @@ class FiberSchedAlgo : public ::boost::fibers::algo::algorithm_with_properties<F
   uint32_t ready_cnt_ = 0;
   int timer_fd_ = -1;
 
-  enum : uint8_t { MAIN_LOOP_SUSPEND = 1, MAIN_YIELDED = 2, MAIN_WAKENED = 4 };
+  enum : uint8_t {
+    IOLOOP_SUSPENDED = 1,  // io loop fiber is suspended
+    IOLOOP_YIELDED = 2,    // while suspended, ioloop switched to another fiber.
+    IOLOOP_WAKENED = 4,
+    SUSPEND_UNTIL_CALLED = 8,
+  };
   uint8_t mask_ = 0;
 };
 

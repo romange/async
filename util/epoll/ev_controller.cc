@@ -149,7 +149,7 @@ void EvController::Run() {
       DVLOG(2) << "Suspend ioloop";
       auto now = GetClockNanos();
       tl_info_.monotonic_time = now;
-      algo->SuspendMain(now);
+      algo->SuspendIoLoop(now);
 
       DVLOG(2) << "Resume ioloop";
       spin_loops = 0;

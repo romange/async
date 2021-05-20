@@ -63,6 +63,7 @@ void UringFiberAlgo::SuspendWithTimer(const time_point& abs_time) noexcept {
 
   // 5.4 does not support absolute timespecs.
   bool support_tm = proactor->support_timeout_;
+  DVLOG(1) << "SuspendWithTimer " << support_tm << " " << ns;
   if (support_tm) {
     // Please note that we can not pass var on stack because we exit from the function
     // before we submit to ring. That's why ts_ is a data member.

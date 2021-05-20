@@ -272,6 +272,35 @@ TEST_F(ProactorTest, Periodic) {
   EXPECT_EQ(num, count);
 }
 
+TEST_F(ProactorTest, TimedWait) {
+  fibers_ext::EventCount ec;
+  fibers::mutex mu;
+  fibers::condition_variable cv;
+  bool res = false;
+  auto fb1 = proactor_->LaunchFiber([&] {
+    std::unique_lock<fibers::mutex> lk(mu);
+    cv.wait(lk, [&] { return res;});
+  });
+
+  auto fb2 = proactor_->LaunchFiber([&] {
+    this_fiber::properties<FiberProps>().set_name("waiter");
+    this_fiber::sleep_for(1ms);
+
+    chrono::steady_clock::time_point tp = chrono::steady_clock::now() + 1ms;
+    cv_status status = ec.await_until([] { return false; }, tp);
+    LOG(INFO) << "await_until " << int(status);
+  });
+
+  this_fiber::sleep_for(1ms);
+  mu.lock();
+  res = true;
+  cv.notify_one();
+  mu.unlock();
+
+  fb1.join();
+  fb2.join();
+}
+
 void BM_AsyncCall(benchmark::State& state) {
   Proactor proactor;
   std::thread t([&] {

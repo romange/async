@@ -15,6 +15,8 @@
 namespace util {
 using namespace boost;
 using namespace std;
+using chrono::nanoseconds;
+using chrono::time_point_cast;
 
 FiberSchedAlgo::FiberSchedAlgo(ProactorBase* proactor) : proactor_(proactor) {
   main_cntx_ = fibers::context::active();
@@ -48,8 +50,8 @@ void FiberSchedAlgo::awakened(FiberContext* ctx, FiberProps& props) noexcept {
         main_cntx_->ready_link(rqueue_);
         FiberProps* main_props = static_cast<FiberProps*>(main_cntx_->get_properties());
         main_props->awaken_ts_ = now;
-        mask_ &= ~MAIN_YIELDED;
-        mask_ |= MAIN_WAKENED;
+        mask_ &= ~IOLOOP_YIELDED;
+        mask_ |= IOLOOP_WAKENED;
       }
     }
   }
@@ -67,16 +69,17 @@ auto FiberSchedAlgo::pick_next() noexcept -> FiberContext* {
 
   // simplest 2-level priority queue.
   // choose main context first
-  if ((mask_ & MAIN_WAKENED) && main_cntx_->ready_is_linked()) {
+  if ((mask_ & IOLOOP_WAKENED) && main_cntx_->ready_is_linked()) {
     ctx = main_cntx_;
     ctx->ready_unlink();
 
-    mask_ &= ~MAIN_WAKENED;
+    mask_ &= ~IOLOOP_WAKENED;
   } else {
     ctx = &rqueue_.front();
     rqueue_.pop_front();
-    if (mask_ & MAIN_LOOP_SUSPEND) {
-      mask_ |= MAIN_YIELDED;
+
+    if (mask_ & IOLOOP_SUSPENDED) {
+      mask_ |= IOLOOP_YIELDED;
     }
   }
   if (!ctx->is_context(boost::fibers::type::dispatcher_context)) {
@@ -143,28 +146,34 @@ void FiberSchedAlgo::suspend_until(time_point const& abs_time) noexcept {
   FiberContext* cur_cntx = fibers::context::active();
 
   DCHECK(cur_cntx->is_context(fibers::type::dispatcher_context));
-  CHECK_EQ(MAIN_LOOP_SUSPEND, mask_ & MAIN_LOOP_SUSPEND) << "Deadlock is detected";
+  CHECK_EQ(IOLOOP_SUSPENDED, mask_ & IOLOOP_SUSPENDED) << "Deadlock is detected";
+  DVLOG(1) << "suspend_until abs_time " << time_point_cast<nanoseconds>(abs_time).time_since_epoch().count();
+
+  mask_ |= SUSPEND_UNTIL_CALLED;
 
   if (time_point::max() != abs_time) {
     SuspendWithTimer(abs_time);
   }
 
-  // schedule does not block just marks main_cntx_ for activation.
+  // schedule does not block just awakens main_cntx_.
   main_cntx_->get_scheduler()->schedule(main_cntx_);
 }
 
-void FiberSchedAlgo::SuspendMain(uint64_t now) {
+bool FiberSchedAlgo::SuspendIoLoop(uint64_t now) {
   // block this fiber till all (ready) fibers are processed
   // or when  AsioScheduler::suspend_until() has been called or awaken() decided to resume it.
-  mask_ |= MAIN_LOOP_SUSPEND;
+  mask_ |= IOLOOP_SUSPENDED;
+  mask_ &= (~SUSPEND_UNTIL_CALLED);
 
   DVLOG(2) << "WaitTillFibersSuspend:Start";
   suspend_main_ts_ = now;
 
   main_cntx_->suspend();
-  mask_ &= ~(MAIN_LOOP_SUSPEND | MAIN_YIELDED | MAIN_WAKENED);
+  mask_ &= ~(IOLOOP_SUSPENDED | IOLOOP_YIELDED | IOLOOP_WAKENED);
 
   DVLOG(2) << "WaitTillFibersSuspend:End";
+
+  return (mask_ & SUSPEND_UNTIL_CALLED) != 0;
 }
 
 }  // namespace util
