@@ -60,12 +60,20 @@ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
 endif()
 
 # Need -fPIC in order to link against shared libraries. For example when creating python modules.
-set(COMPILE_OPTS "-Wall -Wextra -g -fPIC -fno-builtin-malloc -fno-builtin-calloc -march=skylake")
+set(COMPILE_OPTS "-Wall -Wextra -g -fPIC -fno-builtin-malloc -fno-builtin-calloc")
 set(COMPILE_OPTS "${COMPILE_OPTS} -fno-builtin-realloc -fno-builtin-free")
 set(COMPILE_OPTS "${COMPILE_OPTS} -fno-omit-frame-pointer -Wno-unused-parameter -Wno-unused-result")
+
+if (CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+  set(COMPILE_OPTS "${COMPILE_OPTS} -march=armv8.2-a+fp16+rcpc+dotprod+crypto")
+elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+  set(COMPILE_OPTS "${COMPILE_OPTS} -march=skylake")
+else()
+  MESSAGE(FATAL_ERROR "Unsupported architecture ${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMPILE_OPTS} ")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  ${COMPILE_OPTS}")
-
 
 IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
   MESSAGE (CXX_FLAGS " ${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_DEBUG}")
