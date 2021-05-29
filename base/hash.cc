@@ -7,6 +7,8 @@
 #include "absl/base/macros.h"
 #include "absl/base/optimization.h"
 #include <string.h>
+
+#define XXH_INLINE_ALL
 #include <xxhash.h>
 
 namespace {
