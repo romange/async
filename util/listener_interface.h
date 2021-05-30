@@ -47,6 +47,8 @@ class ListenerInterface {
     return 1 << SO_REUSEADDR;
   }
 
+  virtual ProactorBase* PickConnectionProactor();
+
  protected:
   ProactorPool* pool() {
     return pool_;

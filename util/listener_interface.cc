@@ -78,14 +78,17 @@ void ListenerInterface::RunAcceptLoop() {
     std::unique_ptr<FiberSocketBase> peer{res.value()};
 
     VSOCK(2, *peer) << "Accepted " << peer->RemoteEndpoint();
-    ProactorBase* next = pool_->GetNextProactor();  // Could be for another thread.
+
+    // Most probably next is in another thread.
+    ProactorBase* next = PickConnectionProactor();
+
     peer->SetProactor(next);
     Connection* conn = NewConnection(next);
     conn->SetSocket(peer.release());
     safe_list.Link(conn);
 
     // mutable because we move peer.
-    auto cb = [conn, next, &safe_list]() mutable {
+    auto cb = [conn, &safe_list] {
       RunSingleConnection(conn, &safe_list);
     };
 
@@ -137,6 +140,10 @@ void ListenerInterface::RegisterPool(ProactorPool* pool) {
   CHECK(pool_ == nullptr || pool_ == pool);
 
   pool_ = pool;
+}
+
+ProactorBase* ListenerInterface::PickConnectionProactor() {
+  return pool_->GetNextProactor();
 }
 
 }  // namespace util
