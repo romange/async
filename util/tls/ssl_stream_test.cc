@@ -50,6 +50,13 @@ class SslStreamTest : public testing::Test {
   SSL_CTX* CreateSslCntx();
 
   unique_ptr<detail::Engine> client_engine_, server_engine_;
+  OpCb srv_handshake_, client_handshake_, read_op_, shutdown_op_;
+
+  Options client_opts_{"client"}, srv_opts_{"server"};
+
+  unique_ptr<uint8_t[]> read_buf_;
+  enum { READ_CAPACITY = 1024 };
+  size_t read_sz_ = 0;
 };
 
 int verify_callback(int ok, X509_STORE_CTX* ctx) {
@@ -91,6 +98,13 @@ void SslStreamTest::SetUp() {
   SSL* ssl = server_engine_->native_handle();
   SSL_set_options(ssl, SSL_OP_CIPHER_SERVER_PREFERENCE);
   CHECK_EQ(1, SSL_set_dh_auto(ssl, 1));
+
+  read_buf_.reset(new uint8_t[READ_CAPACITY]);
+
+  srv_handshake_ = [](Engine* eng) { return eng->Handshake(Engine::SERVER); };
+  client_handshake_ = [](Engine* eng) { return eng->Handshake(Engine::CLIENT); };
+  read_op_ = [this](Engine* eng) { return eng->Read(read_buf_.get(), READ_CAPACITY); };
+  shutdown_op_ = [](Engine* eng) { return eng->Shutdown(); };
 }
 
 unsigned long SslStreamTest::RunPeer(Options opts, OpCb cb, Engine* src, Engine* dest) {
@@ -123,10 +137,15 @@ unsigned long SslStreamTest::RunPeer(Options opts, OpCb cb, Engine* src, Engine*
       src->ConsumeOutputBuf(*write_result);
     }
 
-    if (*op_result > 0) {
+    if (*op_result >= 0) {  // Shutdown or empty read/write may return 0.
       return 0;
     }
-    CHECK_EQ(-1, *op_result);
+    if (*op_result == Engine::EOF_STREAM) {
+      LOG(ERROR) << opts.name << " stream truncated";
+      return 0;
+    }
+    CHECK_EQ(Engine::RETRY, *op_result);
+
     if (input_pending == 0 && output_pending == 0) {  // dropped connection
       LOG(INFO) << "Dropped connections for " << opts.name;
 
@@ -199,14 +218,12 @@ TEST_F(SslStreamTest, BIO_s_bio_ZeroCopy) {
 TEST_F(SslStreamTest, Handshake) {
   unsigned long cl_err = 0, srv_err = 0;
 
-  auto client_cb = [](Engine* eng) { return eng->Handshake(Engine::CLIENT); };
   auto client_fb = fibers::fiber([&] {
-    cl_err = RunPeer(Options{"client"}, client_cb, client_engine_.get(), server_engine_.get());
+    cl_err = RunPeer(client_opts_, client_handshake_, client_engine_.get(), server_engine_.get());
   });
 
-  auto server_cb = [](Engine* eng) { return eng->Handshake(Engine::SERVER); };
   auto server_fb = fibers::fiber([&] {
-    srv_err = RunPeer(Options{"server"}, server_cb, server_engine_.get(), client_engine_.get());
+    srv_err = RunPeer(srv_opts_, srv_handshake_, server_engine_.get(), client_engine_.get());
   });
 
   client_fb.join();
@@ -217,18 +234,16 @@ TEST_F(SslStreamTest, Handshake) {
 
 TEST_F(SslStreamTest, HandshakeErrServer) {
   unsigned long cl_err = 0, srv_err = 0;
-  auto client_cb = [](Engine* eng) { return eng->Handshake(Engine::CLIENT); };
+
   auto client_fb = fibers::fiber([&] {
-    cl_err = RunPeer(Options{"client"}, client_cb, client_engine_.get(), server_engine_.get());
+    cl_err = RunPeer(client_opts_, client_handshake_, client_engine_.get(), server_engine_.get());
   });
 
-  auto server_cb = [](Engine* eng) { return eng->Handshake(Engine::SERVER); };
-  Options srv_opts{"server"};
-  srv_opts.mutate_indx = 100;
-  srv_opts.mutate_val = 'R';
+  srv_opts_.mutate_indx = 100;
+  srv_opts_.mutate_val = 'R';
 
   auto server_fb = fibers::fiber([&] {
-    srv_err = RunPeer(srv_opts, server_cb, server_engine_.get(), client_engine_.get());
+    srv_err = RunPeer(srv_opts_, srv_handshake_, server_engine_.get(), client_engine_.get());
   });
 
   client_fb.join();
@@ -238,6 +253,35 @@ TEST_F(SslStreamTest, HandshakeErrServer) {
   LOG(INFO) << SSLError(srv_err);
 
   ASSERT_NE(0, cl_err);
+}
+
+TEST_F(SslStreamTest, ReadShutdown) {
+  unsigned long cl_err = 0, srv_err = 0;
+
+  auto client_fb = fibers::fiber([&] {
+    cl_err = RunPeer(client_opts_, client_handshake_, client_engine_.get(), server_engine_.get());
+  });
+
+  auto server_fb = fibers::fiber([&] {
+    srv_err = RunPeer(srv_opts_, srv_handshake_, server_engine_.get(), client_engine_.get());
+  });
+
+  client_fb.join();
+  server_fb.join();
+
+  ASSERT_EQ(0, cl_err);
+  ASSERT_EQ(0, srv_err);
+
+  client_fb = fibers::fiber([&] {
+    cl_err = RunPeer(client_opts_, shutdown_op_, client_engine_.get(), server_engine_.get());
+  });
+
+  server_fb = fibers::fiber([&] {
+    srv_err = RunPeer(srv_opts_, read_op_, server_engine_.get(), client_engine_.get());
+  });
+
+  client_fb.join();
+  server_fb.join();
 }
 
 }  // namespace tls

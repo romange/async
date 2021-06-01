@@ -38,14 +38,19 @@ class error_category : public std::error_category {
 class Engine {
  public:
   enum HandshakeType { CLIENT = 1, SERVER = 2 };
+  enum OpCode {
+    RETRY = -1,
+    EOF_STREAM = -2,
+  };
 
   using error_code = ::std::error_code;
   using Buffer = absl::Span<const uint8_t>;
 
   // If OpResult has error code then it's an openssl error (as returned by ERR_get_error()).
   // In that case the wrapping flow should be stopped since any error there is unretriable.
-  // if OpResult has value, then its positive value means success depending on the context
-  // of the operation. if value==-1 then it means that it should be retried.
+  // if OpResult has value, then its non-negative value means success depending on the context
+  // of the operation. if value== RETRY then it means that it should be retried.
+  // If value == EOF_STREAM it means that a peer closed the SSL connection.
   // In any case for non-error OpResult a caller must check OutputPending and write the output buffer
   // to the appropriate channel.
   using OpResult = nonstd::expected<int, unsigned long> ;
@@ -72,6 +77,14 @@ class Engine {
   // SSL_accept (server-side).
   OpResult Handshake(HandshakeType type);
 
+  OpResult Shutdown();
+
+  // Write bytes to the SSL session. Non-negative value - says how much was written.
+  OpResult Write(const Buffer& data);
+
+  // Read bytes from the SSL session.
+  OpResult Read(uint8_t* dest, size_t len);
+
   //! Returns output (read) buffer. This operation is destructive, i.e. after calling
   //! this function the buffer is being consumed.
   //! See OutputPending() for checking if there is a output buffer to consume.
@@ -86,28 +99,6 @@ class Engine {
 
   // Returns number of written bytes or the error.
   OpResult WriteBuf(const Buffer& buf);
-
-#if 0
-  // Perform a graceful shutdown of the SSL session.
-  want shutdown(boost::system::error_code& ec);
-
-  // Write bytes to the SSL session.
-  want write(const boost::asio::const_buffer& data, boost::system::error_code& ec,
-             std::size_t& bytes_transferred);
-
-  // Read bytes from the SSL session.
-  want read(const boost::asio::mutable_buffer& data, boost::system::error_code& ec,
-            std::size_t& bytes_transferred);
-
-  void GetWriteBuf(boost::asio::mutable_buffer* mbuf);
-
-  //! sz should be less or equal to the size returned by GetWriteBuf.
-  void CommitWriteBuf(size_t sz);
-
-  void GetReadBuf(boost::asio::const_buffer* cbuf);
-  void AdvanceRead(size_t sz);
-
-#endif
 
   size_t OutputPending() const {
     return BIO_ctrl(output_bio_, BIO_CTRL_PENDING, 0, NULL);
@@ -128,23 +119,7 @@ class Engine {
   // Perform one operation. Returns > 0 on success.
   using EngineOp = int (Engine::*)(void*, std::size_t);
 
-  OpResult Perform(EngineOp op, void* data, std::size_t length);
-
-  // Adapt the SSL_connect function to the signature needed for perform().
-  int do_connect(void*, std::size_t);
-
-  int do_accept(void*, std::size_t);
-
-#if 0
-  // Adapt the SSL_shutdown function to the signature needed for perform().
-  int do_shutdown(void*, std::size_t);
-
-  // Adapt the SSL_read function to the signature needed for perform().
-  int do_read(void* data, std::size_t length);
-
-  // Adapt the SSL_write function to the signature needed for perform().
-  int do_write(void* data, std::size_t length);
-#endif
+  static OpResult ToOpResult(const SSL* ssl, int result);
 
   SSL* ssl_;
   BIO* output_bio_;
