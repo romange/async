@@ -39,14 +39,14 @@ class FiberSocketBase : public SyncStreamInterface {
 
   ABSL_MUST_USE_RESULT virtual error_code Close() = 0;
 
+  expected_size_t virtual RecvMsg(const msghdr& msg, int flags) = 0;
+
   using SyncStreamInterface::Send;
 
   expected_size_t Send(const boost::asio::const_buffer& b) {
     iovec v{const_cast<void*>(b.data()), b.size()};
     return Send(&v, 1);
   }
-
-  expected_size_t virtual RecvMsg(const msghdr& msg, int flags) = 0;
 
   expected_size_t Recv(iovec* ptr, size_t len) override;
 

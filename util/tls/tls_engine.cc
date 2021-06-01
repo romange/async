@@ -1,8 +1,8 @@
-// Copyright 2019, Beeri 15.  All rights reserved.
+// Copyright 2021, Beeri 15.  All rights reserved.
 // Author: Roman Gershman (romange@gmail.com)
 //
 
-#include "util/tls/ssl_stream.h"
+#include "util/tls/tls_engine.h"
 
 #include <openssl/err.h>
 
@@ -15,8 +15,6 @@
 namespace util {
 
 namespace tls {
-
-namespace detail {
 
 static error_category tls_category;
 
@@ -155,7 +153,6 @@ auto Engine::Read(uint8_t* dest, size_t len) -> OpResult {
   RETURN_RESULT(result);
 }
 
-}  // namespace detail
 
 #if 0
 SslStream::SslStream(FiberSyncSocket&& arg, asio::ssl::context& ctx)

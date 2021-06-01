@@ -2,7 +2,7 @@
 // Author: Roman Gershman (romange@gmail.com)
 //
 
-#include "util/tls/ssl_stream.h"
+#include "util/tls/tls_engine.h"
 
 #include <absl/strings/string_view.h>
 #include <openssl/err.h>
@@ -18,7 +18,6 @@ namespace tls {
 
 using namespace std;
 using namespace boost;
-using detail::Engine;
 
 class SslStreamTest : public testing::Test {
  protected:
@@ -49,7 +48,7 @@ class SslStreamTest : public testing::Test {
 
   SSL_CTX* CreateSslCntx();
 
-  unique_ptr<detail::Engine> client_engine_, server_engine_;
+  unique_ptr<Engine> client_engine_, server_engine_;
   OpCb srv_handshake_, client_handshake_, read_op_, shutdown_op_;
 
   Options client_opts_{"client"}, srv_opts_{"server"};
@@ -90,8 +89,8 @@ SSL_CTX* SslStreamTest::CreateSslCntx() {
 
 void SslStreamTest::SetUp() {
   SSL_CTX* ctx = CreateSslCntx();
-  client_engine_.reset(new detail::Engine(ctx));
-  server_engine_.reset(new detail::Engine(ctx));
+  client_engine_.reset(new Engine(ctx));
+  server_engine_.reset(new Engine(ctx));
   SSL_CTX_free(ctx);
 
   // Configure server side.

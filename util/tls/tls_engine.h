@@ -14,8 +14,6 @@
 namespace util {
 namespace tls {
 
-namespace detail {
-
 class error_category : public std::error_category {
  public:
   const char* name() const noexcept final {
@@ -128,8 +126,6 @@ class Engine {
   SSL* ssl_;
   BIO* output_bio_;
 };
-
-}  // namespace detail
 
 #if 0
 class SslStream {
