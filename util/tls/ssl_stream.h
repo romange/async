@@ -75,7 +75,14 @@ class Engine {
   //! Returns output (read) buffer. This operation is destructive, i.e. after calling
   //! this function the buffer is being consumed.
   //! See OutputPending() for checking if there is a output buffer to consume.
-  BufResult GetOutputBuf();
+  BufResult FetchOutputBuf();
+
+  //! Returns output (read) buffer. This operation is not destructive and
+  // following ConsumeOutputBuf should be called.
+  BufResult PeekOutputBuf();
+
+  // sz should be not greater than the buffer size from the last PeekOutputBuf() call.
+  void ConsumeOutputBuf(unsigned sz);
 
   // Returns number of written bytes or the error.
   OpResult WriteBuf(const Buffer& buf);
@@ -104,6 +111,12 @@ class Engine {
 
   size_t OutputPending() const {
     return BIO_ctrl(output_bio_, BIO_CTRL_PENDING, 0, NULL);
+  }
+
+  //! It's a bit confusing but when we write into output_bio_ it's like
+  //! and input buffer to the engine.
+  size_t InputPending() const {
+    return BIO_ctrl(output_bio_, BIO_CTRL_WPENDING, 0, NULL);
   }
 
  private:

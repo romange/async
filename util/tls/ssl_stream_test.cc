@@ -4,6 +4,7 @@
 
 #include "util/tls/ssl_stream.h"
 
+#include <absl/strings/string_view.h>
 #include <openssl/err.h>
 
 #include <boost/fiber/fiber.hpp>
@@ -24,21 +25,29 @@ class SslStreamTest : public testing::Test {
   static void SetUpTestSuite() {
   }
 
-  void SetUp() override {
-    client_engine_.reset(new detail::Engine(CreateSslCntx(true)));
-    server_engine_.reset(new detail::Engine(CreateSslCntx(false)));
-  }
+  void SetUp() override;
 
   void TearDown() {
+    client_engine_.reset();
+    server_engine_.reset();
   }
 
   using OpCb = std::function<Engine::OpResult(Engine*)>;
+  struct Options {
+    string name;
 
-  static void RunPeer(string name, OpCb cb, Engine* src, Engine* dest);
+    unsigned mutate_indx = 0;
+    uint8_t mutate_val = 0;
 
-  static void PrintError(unsigned long);
+    Options(absl::string_view v) : name{v} {
+    }
+  };
 
-  SSL_CTX* CreateSslCntx(bool is_client);
+  static unsigned long RunPeer(Options opts, OpCb cb, Engine* src, Engine* dest);
+
+  static string SSLError(unsigned long);
+
+  SSL_CTX* CreateSslCntx();
 
   unique_ptr<detail::Engine> client_engine_, server_engine_;
 };
@@ -48,14 +57,14 @@ int verify_callback(int ok, X509_STORE_CTX* ctx) {
   return 1;
 }
 
-void SslStreamTest::PrintError(unsigned long e) {
+string SslStreamTest::SSLError(unsigned long e) {
   char buf[256];
   ERR_error_string_n(e, buf, sizeof(buf));
-  LOG(FATAL) << "SSL Error: " << buf;
+  return buf;
 }
 
-SSL_CTX* SslStreamTest::CreateSslCntx(bool is_client) {
-  SSL_CTX* ctx = SSL_CTX_new(is_client ? TLS_client_method() : TLS_server_method());
+SSL_CTX* SslStreamTest::CreateSslCntx() {
+  SSL_CTX* ctx = SSL_CTX_new(TLS_method());
 
   SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
 
@@ -66,43 +75,66 @@ SSL_CTX* SslStreamTest::CreateSslCntx(bool is_client) {
 
   // Can also be defined using "ADH:@SECLEVEL=0" cipher string below.
   SSL_CTX_set_security_level(ctx, 0);
-  if (is_client) {
-  } else {
-    SSL_CTX_set_options(ctx, SSL_OP_CIPHER_SERVER_PREFERENCE);
-    SSL_CTX_set_session_id_context(ctx, (const unsigned char*)"test", 4);
-
-    CHECK_EQ(1, SSL_CTX_set_dh_auto(ctx, 1));
-  }
 
   CHECK_EQ(1, SSL_CTX_set_cipher_list(ctx, "ADH"));
 
   return ctx;
 }
 
-void SslStreamTest::RunPeer(string name, OpCb cb, Engine* src, Engine* dest) {
-  ERR_print_errors_fp(stderr);  // Empties the queue.
+void SslStreamTest::SetUp() {
+  SSL_CTX* ctx = CreateSslCntx();
+  client_engine_.reset(new detail::Engine(ctx));
+  server_engine_.reset(new detail::Engine(ctx));
+  SSL_CTX_free(ctx);
 
+  // Configure server side.
+  SSL* ssl = server_engine_->native_handle();
+  SSL_set_options(ssl, SSL_OP_CIPHER_SERVER_PREFERENCE);
+  CHECK_EQ(1, SSL_set_dh_auto(ssl, 1));
+}
+
+unsigned long SslStreamTest::RunPeer(Options opts, OpCb cb, Engine* src, Engine* dest) {
+  ERR_print_errors_fp(stderr);  // Empties the queue.
+  unsigned input_pending = 0;
   while (true) {
     auto op_result = cb(src);
     if (!op_result) {
-      PrintError(op_result.error());
+      return op_result.error();
     }
-    LOG(INFO) << name << " OpResult: " << *op_result;
-    if (src->OutputPending() > 0) {
-      auto buf_result = src->GetOutputBuf();
+    VLOG(1) << opts.name << " OpResult: " << *op_result;
+    unsigned output_pending = src->OutputPending();
+    if (output_pending > 0) {
+      auto buf_result = src->PeekOutputBuf();
       CHECK(buf_result);
-      LOG(INFO) << name << " wrote " << buf_result->size() << " bytes";
-      ASSERT_FALSE(buf_result->empty());
+      VLOG(1) << opts.name << " wrote " << buf_result->size() << " bytes";
+      CHECK(!buf_result->empty());
+
+      if (opts.mutate_indx) {
+        uint8_t* mem = const_cast<uint8_t*>(buf_result->data());
+        mem[opts.mutate_indx % buf_result->size()] = opts.mutate_val;
+        opts.mutate_indx = 0;
+      }
 
       auto write_result = dest->WriteBuf(*buf_result);
-      ASSERT_TRUE(write_result);
-      ASSERT_EQ(*write_result, buf_result->size());
+      if (!write_result) {
+        return write_result.error();
+      }
+      CHECK_GT(*write_result, 0);
+      src->ConsumeOutputBuf(*write_result);
     }
+
     if (*op_result > 0) {
-      return;
+      return 0;
     }
-    ASSERT_EQ(-1, *op_result);
+    CHECK_EQ(-1, *op_result);
+    if (input_pending == 0 && output_pending == 0) {  // dropped connection
+      LOG(INFO) << "Dropped connections for " << opts.name;
+
+      return ERR_PACK(ERR_LIB_USER, 0, ERR_R_OPERATION_FAIL);
+    }
     this_fiber::yield();
+    input_pending = src->InputPending();
+    VLOG(1) << "Input size: " << input_pending;
   }
 }
 
@@ -165,16 +197,47 @@ TEST_F(SslStreamTest, BIO_s_bio_ZeroCopy) {
 }
 
 TEST_F(SslStreamTest, Handshake) {
+  unsigned long cl_err = 0, srv_err = 0;
+
   auto client_cb = [](Engine* eng) { return eng->Handshake(Engine::CLIENT); };
-  auto client_fb =
-      fibers::fiber(&RunPeer, "client", client_cb, client_engine_.get(), server_engine_.get());
+  auto client_fb = fibers::fiber([&] {
+    cl_err = RunPeer(Options{"client"}, client_cb, client_engine_.get(), server_engine_.get());
+  });
 
   auto server_cb = [](Engine* eng) { return eng->Handshake(Engine::SERVER); };
-  auto server_fb =
-      fibers::fiber(&RunPeer, "server", server_cb, server_engine_.get(), client_engine_.get());
+  auto server_fb = fibers::fiber([&] {
+    srv_err = RunPeer(Options{"server"}, server_cb, server_engine_.get(), client_engine_.get());
+  });
 
   client_fb.join();
   server_fb.join();
+  ASSERT_EQ(0, cl_err);
+  ASSERT_EQ(0, srv_err);
+}
+
+TEST_F(SslStreamTest, HandshakeErrServer) {
+  unsigned long cl_err = 0, srv_err = 0;
+  auto client_cb = [](Engine* eng) { return eng->Handshake(Engine::CLIENT); };
+  auto client_fb = fibers::fiber([&] {
+    cl_err = RunPeer(Options{"client"}, client_cb, client_engine_.get(), server_engine_.get());
+  });
+
+  auto server_cb = [](Engine* eng) { return eng->Handshake(Engine::SERVER); };
+  Options srv_opts{"server"};
+  srv_opts.mutate_indx = 100;
+  srv_opts.mutate_val = 'R';
+
+  auto server_fb = fibers::fiber([&] {
+    srv_err = RunPeer(srv_opts, server_cb, server_engine_.get(), client_engine_.get());
+  });
+
+  client_fb.join();
+  server_fb.join();
+
+  LOG(INFO) << SSLError(cl_err);
+  LOG(INFO) << SSLError(srv_err);
+
+  ASSERT_NE(0, cl_err);
 }
 
 }  // namespace tls

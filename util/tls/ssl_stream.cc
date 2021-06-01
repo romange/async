@@ -40,8 +40,7 @@ Engine::Engine(SSL_CTX* context) : ssl_(::SSL_new(context)) {
 
   ::BIO* int_bio = 0;
 
-  // Deliberetely small buffers.
-  BIO_new_bio_pair(&int_bio, 32, &output_bio_, 32);
+  BIO_new_bio_pair(&int_bio, 0, &output_bio_, 0);
 
   // SSL_set0_[rw]bio take ownership of the passed reference,
   // so if we call both with the same BIO, we need the refcount to be 2.
@@ -75,7 +74,7 @@ Engine::OpResult Engine::Perform(EngineOp op, void* data, std::size_t length) {
   return -1;
 }
 
-auto Engine::GetOutputBuf() -> BufResult {
+auto Engine::FetchOutputBuf() -> BufResult {
   char* buf = nullptr;
 
   int res = BIO_nread(output_bio_, &buf, INT_MAX);
@@ -85,6 +84,23 @@ auto Engine::GetOutputBuf() -> BufResult {
   }
 
   return Buffer(reinterpret_cast<const uint8_t*>(buf), res);
+}
+
+auto Engine::PeekOutputBuf() -> BufResult {
+  char* buf = nullptr;
+
+  int res = BIO_nread0(output_bio_, &buf);
+  if (res < 0) {
+    unsigned long error = ::ERR_get_error();
+    return nonstd::make_unexpected(error);
+  }
+  return Buffer(reinterpret_cast<const uint8_t*>(buf), res);
+}
+
+void Engine::ConsumeOutputBuf(unsigned sz) {
+  int res = BIO_nread(output_bio_, NULL, sz);
+  CHECK_GT(res, 0);
+  CHECK_EQ(unsigned(res), sz);
 }
 
 auto Engine::WriteBuf(const Buffer& buf) -> OpResult {
