@@ -78,7 +78,7 @@ class Proactor : public ProactorBase {
   }
 
   void UnregisterFd(unsigned fixed_fd);
-  FiberSocketBase* CreateSocket() final;
+  LinuxSocketBase* CreateSocket() final;
 
  private:
   void DispatchCompletions(io_uring_cqe* cqes, unsigned count);

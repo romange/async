@@ -12,9 +12,9 @@
 namespace util {
 namespace uring {
 
-class FiberSocket : public FiberSocketBase {
+class FiberSocket : public LinuxSocketBase {
  public:
-  FiberSocket(Proactor* p = nullptr) : FiberSocketBase(-1, p) {
+  FiberSocket(Proactor* p = nullptr) : LinuxSocketBase(-1, p) {
   }
 
   virtual ~FiberSocket();
@@ -25,7 +25,7 @@ class FiberSocket : public FiberSocketBase {
   ABSL_MUST_USE_RESULT error_code Close() final;
 
   using FiberSocketBase::Send;
-  
+
   // Really need here expected.
   expected_size_t Send(const iovec* ptr, size_t len) override;
 

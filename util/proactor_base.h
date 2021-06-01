@@ -23,7 +23,7 @@
 namespace util {
 
 class FiberSchedAlgo;
-class FiberSocketBase;
+class LinuxSocketBase;
 
 class ProactorBase {
   ProactorBase(const ProactorBase&) = delete;
@@ -41,7 +41,7 @@ class ProactorBase {
   void Stop();
 
   //! Creates a socket that can be used with this proactor.
-  virtual FiberSocketBase* CreateSocket() = 0;
+  virtual LinuxSocketBase* CreateSocket() = 0;
 
   /**
    * @brief Returns true if the called is running in this Proactor thread.

@@ -75,7 +75,7 @@ void ListenerInterface::RunAcceptLoop() {
       }
       break;
     }
-    std::unique_ptr<FiberSocketBase> peer{res.value()};
+    std::unique_ptr<LinuxSocketBase> peer{static_cast<LinuxSocketBase*>(res.value())};
 
     VSOCK(2, *peer) << "Accepted " << peer->RemoteEndpoint();
 

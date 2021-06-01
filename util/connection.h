@@ -25,7 +25,7 @@ class Connection {
 
   virtual ~Connection() {}
 
-  void SetSocket(FiberSocketBase* s) { socket_.reset(s); }
+  void SetSocket(LinuxSocketBase* s) { socket_.reset(s); }
   auto native_handle() const { return socket_->native_handle(); }
 
  protected:
@@ -33,7 +33,7 @@ class Connection {
   // The main loop for a connection. Runs in the same proactor thread as of socket_.
   virtual void HandleRequests() = 0;
 
-  std::unique_ptr<FiberSocketBase> socket_;
+  std::unique_ptr<LinuxSocketBase> socket_;
   friend class ListenerInterface;
 };
 

@@ -65,7 +65,7 @@ class ListenerInterface {
 
   static void RunSingleConnection(Connection* conn, SafeConnList* list);
 
-  std::unique_ptr<FiberSocketBase> sock_;
+  std::unique_ptr<LinuxSocketBase> sock_;
 
   ProactorPool* pool_ = nullptr;
   friend class AcceptServer;

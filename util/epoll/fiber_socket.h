@@ -10,7 +10,7 @@
 namespace util {
 namespace epoll {
 
-class FiberSocket : public FiberSocketBase {
+class FiberSocket : public LinuxSocketBase {
  public:
 
   FiberSocket();

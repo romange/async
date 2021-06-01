@@ -100,6 +100,10 @@ class Engine {
   // Returns number of written bytes or the error.
   OpResult WriteBuf(const Buffer& buf);
 
+  // Returns size of pending data that needs to be flushed out from SSL to I/O.
+  // See https://www.openssl.org/docs/man1.1.0/man3/BIO_new_bio_pair.html
+  // Specifically, warning that says: "An application must not rely on the error value of
+  // SSL_operation() but must assure that the write buffer is always flushed first".
   size_t OutputPending() const {
     return BIO_ctrl(output_bio_, BIO_CTRL_PENDING, 0, NULL);
   }

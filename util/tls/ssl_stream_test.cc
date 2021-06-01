@@ -109,7 +109,7 @@ void SslStreamTest::SetUp() {
 
 unsigned long SslStreamTest::RunPeer(Options opts, OpCb cb, Engine* src, Engine* dest) {
   ERR_print_errors_fp(stderr);  // Empties the queue.
-  unsigned input_pending = 0;
+  unsigned input_pending = 1;
   while (true) {
     auto op_result = cb(src);
     if (!op_result) {
@@ -141,7 +141,7 @@ unsigned long SslStreamTest::RunPeer(Options opts, OpCb cb, Engine* src, Engine*
       return 0;
     }
     if (*op_result == Engine::EOF_STREAM) {
-      LOG(ERROR) << opts.name << " stream truncated";
+      LOG(WARNING) << opts.name << " stream truncated";
       return 0;
     }
     CHECK_EQ(Engine::RETRY, *op_result);
@@ -280,8 +280,33 @@ TEST_F(SslStreamTest, ReadShutdown) {
     srv_err = RunPeer(srv_opts_, read_op_, server_engine_.get(), client_engine_.get());
   });
 
-  client_fb.join();
   server_fb.join();
+  client_fb.join();
+  ASSERT_EQ(0, cl_err);
+  ASSERT_EQ(0, srv_err);
+
+  int shutdown_srv = SSL_get_shutdown(server_engine_->native_handle());
+  int shutdown_client = SSL_get_shutdown(client_engine_->native_handle());
+  ASSERT_EQ(SSL_RECEIVED_SHUTDOWN, shutdown_srv);
+  ASSERT_EQ(SSL_SENT_SHUTDOWN, shutdown_client);
+
+  client_fb = fibers::fiber([&] {
+    cl_err = RunPeer(client_opts_, shutdown_op_, client_engine_.get(), server_engine_.get());
+  });
+
+  server_fb = fibers::fiber([&] {
+    srv_err = RunPeer(srv_opts_, shutdown_op_, server_engine_.get(), client_engine_.get());
+  });
+  server_fb.join();
+  client_fb.join();
+
+  ASSERT_EQ(0, cl_err) << SSLError(cl_err);
+  ASSERT_EQ(0, srv_err);
+
+  shutdown_srv = SSL_get_shutdown(server_engine_->native_handle());
+  shutdown_client = SSL_get_shutdown(client_engine_->native_handle());
+  ASSERT_EQ(SSL_RECEIVED_SHUTDOWN | SSL_SENT_SHUTDOWN, shutdown_srv);
+  ASSERT_EQ(shutdown_client, shutdown_srv);
 }
 
 }  // namespace tls

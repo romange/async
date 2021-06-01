@@ -222,7 +222,7 @@ void EvController::Init() {
   Arm(wake_fd_, std::move(cb), EPOLLIN);
 }
 
-FiberSocketBase* EvController::CreateSocket() {
+LinuxSocketBase* EvController::CreateSocket() {
   FiberSocket* res = new FiberSocket;
   res->SetProactor(this);
 

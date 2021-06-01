@@ -40,7 +40,7 @@ class EvController : public ProactorBase {
   void Init();
   void DispatchCompletions(struct epoll_event* cevents, unsigned count);
 
-  FiberSocketBase* CreateSocket() final;
+  LinuxSocketBase* CreateSocket() final;
   void SchedulePeriodic(uint32_t id, std::shared_ptr<PeriodicItem> item) final;
   void CancelPeriodicInternal(std::shared_ptr<PeriodicItem> item) final;
 

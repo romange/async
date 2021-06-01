@@ -293,7 +293,7 @@ void Proactor::Run() {
   centries_.clear();
 }
 
-FiberSocketBase* Proactor::CreateSocket() {
+LinuxSocketBase* Proactor::CreateSocket() {
   return new FiberSocket{this};
 }
 

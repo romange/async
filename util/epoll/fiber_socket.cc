@@ -36,7 +36,7 @@ inline ssize_t posix_err_wrap(ssize_t res, FiberSocket::error_code* ec) {
 
 }  // namespace
 
-FiberSocket::FiberSocket() : FiberSocketBase(-1, nullptr) {
+FiberSocket::FiberSocket() : LinuxSocketBase(-1, nullptr) {
 }
 
 FiberSocket::~FiberSocket() {

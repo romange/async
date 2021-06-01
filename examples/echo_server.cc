@@ -152,7 +152,7 @@ void RunServer(ProactorPool* pp) {
 }
 
 class Driver {
-  std::unique_ptr<FiberSocketBase> socket_;
+  std::unique_ptr<LinuxSocketBase> socket_;
 
   Driver(const Driver&) = delete;
 

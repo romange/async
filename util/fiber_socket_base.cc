@@ -33,7 +33,26 @@ inline ssize_t posix_err_wrap(ssize_t res, FiberSocketBase::error_code* ec) {
 
 }  // namespace
 
-FiberSocketBase::~FiberSocketBase() {
+
+void FiberSocketBase::SetProactor(ProactorBase* p) {
+  CHECK(proactor_ == nullptr);
+  proactor_ = p;
+
+  OnSetProactor();
+}
+
+auto FiberSocketBase::Recv(iovec* ptr, size_t len) -> expected_size_t {
+  CHECK_GT(len, 0U);
+
+  msghdr msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.msg_iov = const_cast<iovec*>(ptr);
+  msg.msg_iovlen = len;
+
+  return RecvMsg(msg, 0);
+}
+
+LinuxSocketBase::~LinuxSocketBase() {
   int fd = native_handle();
 
   if (fd > -1) {
@@ -43,24 +62,8 @@ FiberSocketBase::~FiberSocketBase() {
   }
 }
 
-auto FiberSocketBase::Shutdown(int how) -> error_code {
-  CHECK_GE(fd_, 0);
 
-  // If we shutdown and then try to Send/Recv - the call will stall since no data
-  // is sent/received. Therefore we remember the state to allow consistent API experience.
-  error_code ec;
-  if (fd_ & IS_SHUTDOWN)
-    return ec;
-  int fd = native_handle();
-
-  posix_err_wrap(::shutdown(fd, how), &ec);
-  fd_ |= IS_SHUTDOWN;  // Enter shutdown state unrelated to the success of the call.
-
-  return ec;
-}
-
-
-auto FiberSocketBase::Listen(unsigned port, unsigned backlog, uint32_t sock_opts_mask) -> error_code {
+auto LinuxSocketBase::Listen(unsigned port, unsigned backlog, uint32_t sock_opts_mask) -> error_code {
   CHECK_EQ(fd_, -1) << "Close socket before!";
 
   error_code ec;
@@ -95,7 +98,24 @@ auto FiberSocketBase::Listen(unsigned port, unsigned backlog, uint32_t sock_opts
   return ec;
 }
 
-auto FiberSocketBase::LocalEndpoint() const -> endpoint_type {
+auto LinuxSocketBase::Shutdown(int how) -> error_code {
+  CHECK_GE(fd_, 0);
+
+  // If we shutdown and then try to Send/Recv - the call will stall since no data
+  // is sent/received. Therefore we remember the state to allow consistent API experience.
+  error_code ec;
+  if (fd_ & IS_SHUTDOWN)
+    return ec;
+  int fd = native_handle();
+
+  posix_err_wrap(::shutdown(fd, how), &ec);
+  fd_ |= IS_SHUTDOWN;  // Enter shutdown state unrelated to the success of the call.
+
+  return ec;
+}
+
+
+auto LinuxSocketBase::LocalEndpoint() const -> endpoint_type {
   endpoint_type endpoint;
 
   if (fd_ < 0)
@@ -111,7 +131,7 @@ auto FiberSocketBase::LocalEndpoint() const -> endpoint_type {
   return endpoint;
 }
 
-auto FiberSocketBase::RemoteEndpoint() const -> endpoint_type {
+auto LinuxSocketBase::RemoteEndpoint() const -> endpoint_type {
   endpoint_type endpoint;
   CHECK_GT(fd_, 0);
 
@@ -122,24 +142,6 @@ auto FiberSocketBase::RemoteEndpoint() const -> endpoint_type {
     endpoint.resize(addr_len);
 
   return endpoint;
-}
-
-void FiberSocketBase::SetProactor(ProactorBase* p) {
-  CHECK(proactor_ == nullptr);
-  proactor_ = p;
-
-  OnSetProactor();
-}
-
-auto FiberSocketBase::Recv(iovec* ptr, size_t len) -> expected_size_t {
-  CHECK_GT(len, 0U);
-
-  msghdr msg;
-  memset(&msg, 0, sizeof(msg));
-  msg.msg_iov = const_cast<iovec*>(ptr);
-  msg.msg_iovlen = len;
-
-  return RecvMsg(msg, 0);
 }
 
 }  // namespace util

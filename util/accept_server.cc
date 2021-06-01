@@ -79,7 +79,7 @@ unsigned short AcceptServer::AddListener(unsigned short port, ListenerInterface*
   ProactorBase* next = pool_->GetNextProactor();
 
   // TODO: to think about FiberSocket creation.
-  std::unique_ptr<FiberSocketBase> fs{next->CreateSocket()};
+  std::unique_ptr<LinuxSocketBase> fs{next->CreateSocket()};
   uint32_t sock_opt_mask = lii->GetSockOptMask();
   auto ec = fs->Listen(port, backlog_, sock_opt_mask);
   CHECK(!ec) << "Could not open port " << port << " " << ec << "/" << ec.message();
