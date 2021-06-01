@@ -4,19 +4,52 @@
 
 #pragma once
 
-#include <system_error>
+#include <absl/types/span.h>
 #include <openssl/ssl.h>
+
+#include <system_error>
+
+#include "base/expected.hpp"
 
 namespace util {
 namespace tls {
 
-#if 0
 namespace detail {
+
+class error_category : public std::error_category {
+ public:
+  const char* name() const noexcept final {
+    return "async.tls";
+  }
+
+  std::string message(int ev) const final;
+
+  std::error_condition default_error_condition(int ev) const noexcept final;
+
+  bool equivalent(int ev, const std::error_condition& condition) const noexcept final {
+    return condition.value() == ev && &condition.category() == this;
+  }
+
+  bool equivalent(const std::error_code& error, int ev) const noexcept final {
+    return error.value() == ev && &error.category() == this;
+  }
+};
 
 class Engine {
  public:
-  // using verify_mode = ::boost::asio::ssl::verify_mode;
-  // using want = ::boost::asio::ssl::detail::engine::want;
+  enum HandshakeType { CLIENT = 1, SERVER = 2 };
+
+  using error_code = ::std::error_code;
+  using Buffer = absl::Span<const uint8_t>;
+
+  // If OpResult has error code then it's an openssl error (as returned by ERR_get_error()).
+  // In that case the wrapping flow should be stopped since any error there is unretriable.
+  // if OpResult has value, then its positive value means success depending on the context
+  // of the operation. if value==-1 then it means that it should be retried.
+  // In any case for non-error OpResult a caller must check OutputPending and write the output buffer
+  // to the appropriate channel.
+  using OpResult = nonstd::expected<int, unsigned long> ;
+  using BufResult = nonstd::expected<Buffer, unsigned long> ;
 
   // Construct a new engine for the specified context.
   explicit Engine(SSL_CTX* context);
@@ -29,14 +62,25 @@ class Engine {
     return ssl_;
   }
 
-  // Set the peer verification mode.
-  std::system::error_code set_verify_mode(verify_mode v, std::system::error_code& ec);
+  //! Set the peer verification mode. mode is a mask of values specified at
+  //! https://www.openssl.org/docs/man1.1.1/man3/SSL_set_verify.html
+  void set_verify_mode(int mode) {
+    ::SSL_set_verify(ssl_, mode, ::SSL_get_verify_callback(ssl_));
+  }
 
   // Perform an SSL handshake using either SSL_connect (client-side) or
   // SSL_accept (server-side).
-  want handshake(::boost::asio::ssl::stream_base::handshake_type type,
-                 boost::system::error_code& ec);
+  OpResult Handshake(HandshakeType type);
 
+  //! Returns output (read) buffer. This operation is destructive, i.e. after calling
+  //! this function the buffer is being consumed.
+  //! See OutputPending() for checking if there is a output buffer to consume.
+  BufResult GetOutputBuf();
+
+  // Returns number of written bytes or the error.
+  OpResult WriteBuf(const Buffer& buf);
+
+#if 0
   // Perform a graceful shutdown of the SSL session.
   want shutdown(boost::system::error_code& ec);
 
@@ -56,25 +100,29 @@ class Engine {
   void GetReadBuf(boost::asio::const_buffer* cbuf);
   void AdvanceRead(size_t sz);
 
-  // Map an error::eof code returned by the underlying transport according to
-  // the type and state of the SSL session. Returns a const reference to the
-  // error code object, suitable for passing to a completion handler.
-  const boost::system::error_code& map_error_code(boost::system::error_code& ec) const;
+#endif
+
+  size_t OutputPending() const {
+    return BIO_ctrl(output_bio_, BIO_CTRL_PENDING, 0, NULL);
+  }
 
  private:
   // Disallow copying and assignment.
   Engine(const Engine&) = delete;
   Engine& operator=(const Engine&) = delete;
 
-  // Perform one operation. Returns >= 0 on success or error, want_read if the
-  // operation needs more input, or want_write if it needs to write some output
-  // before the operation can complete.
-  want perform(int (Engine::*op)(void*, std::size_t), void* data, std::size_t length,
-               boost::system::error_code& ec, std::size_t* bytes_transferred);
+
+  // Perform one operation. Returns > 0 on success.
+  using EngineOp = int (Engine::*)(void*, std::size_t);
+
+  OpResult Perform(EngineOp op, void* data, std::size_t length);
 
   // Adapt the SSL_connect function to the signature needed for perform().
   int do_connect(void*, std::size_t);
 
+  int do_accept(void*, std::size_t);
+
+#if 0
   // Adapt the SSL_shutdown function to the signature needed for perform().
   int do_shutdown(void*, std::size_t);
 
@@ -83,13 +131,15 @@ class Engine {
 
   // Adapt the SSL_write function to the signature needed for perform().
   int do_write(void* data, std::size_t length);
+#endif
 
   SSL* ssl_;
-  BIO* ext_bio_;
+  BIO* output_bio_;
 };
 
 }  // namespace detail
 
+#if 0
 class SslStream {
   using Impl = ::boost::asio::ssl::stream<FiberSyncSocket>;
 
