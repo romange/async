@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include <openssl/ossl_typ.h>
+#include <openssl/ssl.h>
 
 #include "util/fiber_socket_base.h"
 
@@ -33,11 +33,13 @@ class TlsSocket : public FiberSocketBase {
   expected_size_t RecvMsg(const msghdr& msg, int flags) final;
 
   expected_size_t Send(const iovec* ptr, size_t len) final;
-  expected_size_t Recv(iovec* ptr, size_t len) final;
 
   SSL* ssl_handle();
 
  private:
+  error_code MaybeSendOutput();
+  error_code HandleRead();
+
   FiberSocketBase* next_sock_;
   std::unique_ptr<Engine> engine_;
 };

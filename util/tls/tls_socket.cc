@@ -72,70 +72,209 @@ void TlsSocket::InitSSL(SSL_CTX* context) {
 }
 
 auto TlsSocket::Shutdown(int how) -> error_code {
+  DCHECK(engine_);
+
   return error_code{};
 }
 
 auto TlsSocket::Accept() -> accept_result {
-  unsigned input_pending = 1;
+  DCHECK(engine_);
+
   while (true) {
     Engine::OpResult op_result = engine_->Handshake(Engine::SERVER);
     if (!op_result) {
       return make_unexpected(SSL2Error(op_result.error()));
     }
 
-    unsigned output_pending = engine_->OutputPending();
-    if (output_pending > 0) {
-      auto buf_result = engine_->PeekOutputBuf();
-      CHECK(buf_result);
-      CHECK(!buf_result->empty());
-
-      auto snd_buf = asio::buffer(buf_result->data(), buf_result->size());
-
-      expected_size_t write_result = next_sock_->Send(snd_buf);
-      if (!write_result) {
-        return make_unexpected(write_result.error());
-      }
-      CHECK_GT(*write_result, 0u);
-      engine_->ConsumeOutputBuf(*write_result);
+    error_code ec = MaybeSendOutput();
+    if (ec) {
+      return make_unexpected(ec);
     }
 
-    if (*op_result >= 0) {  // Shutdown or empty read/write may return 0.
+    int op_val = *op_result;
+
+    if (op_val >= 0) {  // Shutdown or empty read/write may return 0.
       break;
     }
-    if (*op_result == Engine::EOF_STREAM) {
+    if (op_val == Engine::EOF_STREAM) {
       return make_unexpected(make_error_code(errc::connection_reset));
     }
-    CHECK_EQ(Engine::RETRY, *op_result);
-
-    input_pending = engine_->InputPending();
-    VLOG(1) << "Input size: " << input_pending;
+    if (op_val == Engine::NEED_READ_AND_MAYBE_WRITE) {
+      ec = HandleRead();
+      if (ec)
+        return make_unexpected(ec);
+    }
   }
 
   return nullptr;
 }
 
 auto TlsSocket::Connect(const endpoint_type& ep) -> error_code {
+  DCHECK(engine_);
+
   return error_code{};
 }
 
 auto TlsSocket::Close() -> error_code {
+  DCHECK(engine_);
+
   return error_code{};
 }
 
 auto TlsSocket::RecvMsg(const msghdr& msg, int flags) -> expected_size_t {
-  return expected_size_t{};
+  DCHECK(engine_);
+  DCHECK_GT(msg.msg_iovlen, 0u);
+
+  DLOG_IF(INFO, flags) << "Flags argument is not supported " << flags;
+
+  auto* io = msg.msg_iov;
+  size_t io_len = msg.msg_iovlen;
+
+  Engine::MutableBuffer dest{reinterpret_cast<uint8_t*>(io->iov_base), io->iov_len};
+  size_t read_total = 0;
+
+  while (true) {
+    DCHECK(!dest.empty());
+
+    size_t read_len = std::min(dest.size(), size_t(INT_MAX));
+
+    Engine::OpResult op_result = engine_->Read(dest.data(), read_len);
+    if (!op_result) {
+      return make_unexpected(SSL2Error(op_result.error()));
+    }
+
+    error_code ec = MaybeSendOutput();
+    if (ec) {
+      return make_unexpected(ec);
+    }
+
+    int op_val = *op_result;
+
+    if (op_val > 0) {
+      read_total += op_val;
+
+      if (size_t(op_val) == read_len) {
+        if (size_t(op_val) < dest.size()) {
+          dest.remove_prefix(op_val);
+        } else {
+          ++io;
+          --io_len;
+          if (io_len == 0)
+            break;
+          dest = Engine::MutableBuffer{reinterpret_cast<uint8_t*>(io->iov_base), io->iov_len};
+        }
+        continue;  // We read everything we asked for - lets retry.
+      }
+      break;
+    }
+
+    if (read_total)  // if we read something lets return it before we handle other states.
+      break;
+
+    if (op_val == Engine::EOF_STREAM) {
+      return make_unexpected(make_error_code(errc::connection_reset));
+    }
+
+    if (op_val == Engine::NEED_READ_AND_MAYBE_WRITE) {
+      ec = HandleRead();
+      if (ec)
+        return make_unexpected(ec);
+    }
+  }
+  return read_total;
 }
 
 auto TlsSocket::Send(const iovec* ptr, size_t len) -> expected_size_t {
-  return expected_size_t{};
-}
+  DCHECK(engine_);
+  DCHECK_GT(len, 0u);
 
-auto TlsSocket::Recv(iovec* ptr, size_t len) -> expected_size_t {
-  return expected_size_t{};
+  Engine::Buffer dest{reinterpret_cast<uint8_t*>(ptr->iov_base), ptr->iov_len};
+  size_t send_total = 0;
+
+  while (true) {
+    DCHECK(!dest.empty());
+
+    size_t send_len = std::min(dest.size(), size_t(INT_MAX));
+
+    Engine::OpResult op_result = engine_->Write(dest);
+    if (!op_result) {
+      return make_unexpected(SSL2Error(op_result.error()));
+    }
+
+    error_code ec = MaybeSendOutput();
+    if (ec) {
+      return make_unexpected(ec);
+    }
+
+    int op_val = *op_result;
+
+    if (op_val > 0) {
+      send_total += op_val;
+
+      if (size_t(op_val) == send_len) {
+        if (size_t(op_val) < dest.size()) {
+          dest.remove_prefix(op_val);
+        } else {
+          ++ptr;
+          --len;
+          if (len == 0)
+            break;
+          dest = Engine::MutableBuffer{reinterpret_cast<uint8_t*>(ptr->iov_base), ptr->iov_len};
+        }
+        continue;  // We read everything we asked for - lets retry.
+      }
+      break;
+    }
+
+    if (send_total)  // if we sent something lets return it before we handle other states.
+      break;
+
+    if (op_val == Engine::EOF_STREAM) {
+      return make_unexpected(make_error_code(errc::connection_reset));
+    }
+
+    if (op_val == Engine::NEED_READ_AND_MAYBE_WRITE) {
+      ec = HandleRead();
+      if (ec)
+        return make_unexpected(ec);
+    }
+  }
+
+  return send_total;
 }
 
 SSL* TlsSocket::ssl_handle() {
   return engine_ ? engine_->native_handle() : nullptr;
+}
+
+auto TlsSocket::MaybeSendOutput() -> error_code {
+  auto buf_result = engine_->PeekOutputBuf();
+  CHECK(buf_result);
+
+  if (!buf_result->empty()) {
+    auto snd_buf = asio::buffer(buf_result->data(), buf_result->size());
+
+    expected_size_t write_result = next_sock_->Send(snd_buf);
+    if (!write_result) {
+      return write_result.error();
+    }
+    CHECK_GT(*write_result, 0u);
+    engine_->ConsumeOutputBuf(*write_result);
+  }
+
+  return error_code{};
+}
+
+auto TlsSocket::HandleRead() -> error_code {
+  auto mut_buf = engine_->PeekInputBuf();
+  auto asio_mbuf = asio::buffer(mut_buf.data(), mut_buf.size());
+  expected_size_t esz = next_sock_->Recv(asio_mbuf);
+  if (!esz) {
+    return esz.error();
+  }
+  engine_->CommitInput(*esz);
+
+  return error_code{};
 }
 
 }  // namespace tls

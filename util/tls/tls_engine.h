@@ -16,18 +16,20 @@ class Engine {
  public:
   enum HandshakeType { CLIENT = 1, SERVER = 2 };
   enum OpCode {
-    RETRY = -1,
-    EOF_STREAM = -2,
+    EOF_STREAM = -1,
+    NEED_READ_AND_MAYBE_WRITE = -2,
+    NEED_WRITE = -3,
   };
 
   using error_code = ::std::error_code;
   using Buffer = absl::Span<const uint8_t>;
+  using MutableBuffer = absl::Span<uint8_t>;
 
   // If OpResult has error code then it's an openssl error (as returned by ERR_get_error()).
   // In that case the wrapping flow should be stopped since any error there is unretriable.
   // if OpResult has value, then its non-negative value means success depending on the context
-  // of the operation. if value== RETRY then it means that it should be retried.
-  // If value == EOF_STREAM it means that a peer closed the SSL connection.
+  // of the operation. If value == EOF_STREAM it means that a peer closed the SSL connection.
+  // if value == NEED_XXX then it means that it should either write data to IO and then read or just write.
   // In any case for non-error OpResult a caller must check OutputPending and write the output buffer
   // to the appropriate channel.
   using OpResult = nonstd::expected<int, unsigned long> ;
@@ -74,21 +76,25 @@ class Engine {
   // sz should be not greater than the buffer size from the last PeekOutputBuf() call.
   void ConsumeOutputBuf(unsigned sz);
 
-  // Returns number of written bytes or the error.
+  //! Writes the buffer into input ssl buffer.
+  //! Returns number of written bytes or the error.
   OpResult WriteBuf(const Buffer& buf);
+
+  MutableBuffer PeekInputBuf() const;
+  void CommitInput(unsigned sz);
 
   // Returns size of pending data that needs to be flushed out from SSL to I/O.
   // See https://www.openssl.org/docs/man1.1.0/man3/BIO_new_bio_pair.html
   // Specifically, warning that says: "An application must not rely on the error value of
   // SSL_operation() but must assure that the write buffer is always flushed first".
   size_t OutputPending() const {
-    return BIO_ctrl(output_bio_, BIO_CTRL_PENDING, 0, NULL);
+    return BIO_ctrl(external_bio_, BIO_CTRL_PENDING, 0, NULL);
   }
 
-  //! It's a bit confusing but when we write into output_bio_ it's like
+  //! It's a bit confusing but when we write into external_bio_ it's like
   //! and input buffer to the engine.
   size_t InputPending() const {
-    return BIO_ctrl(output_bio_, BIO_CTRL_WPENDING, 0, NULL);
+    return BIO_ctrl(external_bio_, BIO_CTRL_WPENDING, 0, NULL);
   }
 
  private:
@@ -103,7 +109,7 @@ class Engine {
   static OpResult ToOpResult(const SSL* ssl, int result);
 
   SSL* ssl_;
-  BIO* output_bio_;
+  BIO* external_bio_;
 };
 
 #if 0

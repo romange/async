@@ -149,7 +149,6 @@ static unsigned long RunPeer(SslStreamTest::Options opts, SslStreamTest::OpCb cb
       LOG(WARNING) << opts.name << " stream truncated";
       return 0;
     }
-    CHECK_EQ(Engine::RETRY, *op_result);
 
     if (input_pending == 0 && output_pending == 0) {  // dropped connection
       LOG(INFO) << "Dropped connections for " << opts.name;
