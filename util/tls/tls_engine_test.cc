@@ -19,7 +19,49 @@ namespace tls {
 using namespace std;
 using namespace boost;
 
+string SSLError(unsigned long e) {
+  char buf[256];
+  ERR_error_string_n(e, buf, sizeof(buf));
+  return buf;
+}
+
+static int VerifyCallback(int ok, X509_STORE_CTX* ctx) {
+  LOG(WARNING) << "verify_callback: " << ok;
+  return 1;
+}
+
+SSL_CTX* CreateSslCntx() {
+  SSL_CTX* ctx = SSL_CTX_new(TLS_method());
+
+  SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+
+  SSL_CTX_set_options(ctx, SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS);
+
+  // SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+  SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, VerifyCallback);
+
+  // Can also be defined using "ADH:@SECLEVEL=0" cipher string below.
+  SSL_CTX_set_security_level(ctx, 0);
+
+  CHECK_EQ(1, SSL_CTX_set_cipher_list(ctx, "ADH"));
+
+  return ctx;
+}
 class SslStreamTest : public testing::Test {
+ public:
+  struct Options {
+    string name;
+
+    unsigned mutate_indx = 0;
+    uint8_t mutate_val = 0;
+    bool drain_output = false;
+
+    Options(absl::string_view v) : name{v} {
+    }
+  };
+
+  using OpCb = std::function<Engine::OpResult(Engine*)>;
+
  protected:
   static void SetUpTestSuite() {
   }
@@ -31,64 +73,20 @@ class SslStreamTest : public testing::Test {
     server_engine_.reset();
   }
 
-  using OpCb = std::function<Engine::OpResult(Engine*)>;
-  struct Options {
-    string name;
-
-    unsigned mutate_indx = 0;
-    uint8_t mutate_val = 0;
-
-    Options(absl::string_view v) : name{v} {
-    }
-  };
-
-  static unsigned long RunPeer(Options opts, OpCb cb, Engine* src, Engine* dest);
-
-  static string SSLError(unsigned long);
-
-  SSL_CTX* CreateSslCntx();
-
   unique_ptr<Engine> client_engine_, server_engine_;
-  OpCb srv_handshake_, client_handshake_, read_op_, shutdown_op_;
+  OpCb srv_handshake_, client_handshake_, shutdown_op_;
+  OpCb write_op_, read_op_;
 
   Options client_opts_{"client"}, srv_opts_{"server"};
 
-  unique_ptr<uint8_t[]> read_buf_;
-  enum { READ_CAPACITY = 1024 };
+  unique_ptr<uint8_t[]> tmp_buf_;
+  enum { TMP_CAPACITY = 1024 };
   size_t read_sz_ = 0;
 };
 
-int verify_callback(int ok, X509_STORE_CTX* ctx) {
-  LOG(WARNING) << "verify_callback: " << ok;
-  return 1;
-}
-
-string SslStreamTest::SSLError(unsigned long e) {
-  char buf[256];
-  ERR_error_string_n(e, buf, sizeof(buf));
-  return buf;
-}
-
-SSL_CTX* SslStreamTest::CreateSslCntx() {
-  SSL_CTX* ctx = SSL_CTX_new(TLS_method());
-
-  SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
-
-  SSL_CTX_set_options(ctx, SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS);
-
-  // SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
-  SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, verify_callback);
-
-  // Can also be defined using "ADH:@SECLEVEL=0" cipher string below.
-  SSL_CTX_set_security_level(ctx, 0);
-
-  CHECK_EQ(1, SSL_CTX_set_cipher_list(ctx, "ADH"));
-
-  return ctx;
-}
-
 void SslStreamTest::SetUp() {
   SSL_CTX* ctx = CreateSslCntx();
+
   client_engine_.reset(new Engine(ctx));
   server_engine_.reset(new Engine(ctx));
   SSL_CTX_free(ctx);
@@ -98,16 +96,21 @@ void SslStreamTest::SetUp() {
   SSL_set_options(ssl, SSL_OP_CIPHER_SERVER_PREFERENCE);
   CHECK_EQ(1, SSL_set_dh_auto(ssl, 1));
 
-  read_buf_.reset(new uint8_t[READ_CAPACITY]);
+  tmp_buf_.reset(new uint8_t[TMP_CAPACITY]);
 
   srv_handshake_ = [](Engine* eng) { return eng->Handshake(Engine::SERVER); };
   client_handshake_ = [](Engine* eng) { return eng->Handshake(Engine::CLIENT); };
-  read_op_ = [this](Engine* eng) { return eng->Read(read_buf_.get(), READ_CAPACITY); };
+  read_op_ = [this](Engine* eng) { return eng->Read(tmp_buf_.get(), TMP_CAPACITY); };
   shutdown_op_ = [](Engine* eng) { return eng->Shutdown(); };
+  write_op_ = [this](Engine* eng) {
+    return eng->Write(Engine::Buffer{tmp_buf_.get(), TMP_CAPACITY});
+  };
+
+  ERR_print_errors_fp(stderr);  // Empties the queue.
 }
 
-unsigned long SslStreamTest::RunPeer(Options opts, OpCb cb, Engine* src, Engine* dest) {
-  ERR_print_errors_fp(stderr);  // Empties the queue.
+static unsigned long RunPeer(SslStreamTest::Options opts, SslStreamTest::OpCb cb, Engine* src,
+                             Engine* dest) {
   unsigned input_pending = 1;
   while (true) {
     auto op_result = cb(src);
@@ -117,25 +120,28 @@ unsigned long SslStreamTest::RunPeer(Options opts, OpCb cb, Engine* src, Engine*
     VLOG(1) << opts.name << " OpResult: " << *op_result;
     unsigned output_pending = src->OutputPending();
     if (output_pending > 0) {
-      auto buf_result = src->PeekOutputBuf();
-      CHECK(buf_result);
-      VLOG(1) << opts.name << " wrote " << buf_result->size() << " bytes";
-      CHECK(!buf_result->empty());
+      if (opts.drain_output)
+        src->FetchOutputBuf();
+      else {
+        auto buf_result = src->PeekOutputBuf();
+        CHECK(buf_result);
+        VLOG(1) << opts.name << " wrote " << buf_result->size() << " bytes";
+        CHECK(!buf_result->empty());
 
-      if (opts.mutate_indx) {
-        uint8_t* mem = const_cast<uint8_t*>(buf_result->data());
-        mem[opts.mutate_indx % buf_result->size()] = opts.mutate_val;
-        opts.mutate_indx = 0;
-      }
+        if (opts.mutate_indx) {
+          uint8_t* mem = const_cast<uint8_t*>(buf_result->data());
+          mem[opts.mutate_indx % buf_result->size()] = opts.mutate_val;
+          opts.mutate_indx = 0;
+        }
 
-      auto write_result = dest->WriteBuf(*buf_result);
-      if (!write_result) {
-        return write_result.error();
+        auto write_result = dest->WriteBuf(*buf_result);
+        if (!write_result) {
+          return write_result.error();
+        }
+        CHECK_GT(*write_result, 0);
+        src->ConsumeOutputBuf(*write_result);
       }
-      CHECK_GT(*write_result, 0);
-      src->ConsumeOutputBuf(*write_result);
     }
-
     if (*op_result >= 0) {  // Shutdown or empty read/write may return 0.
       return 0;
     }
@@ -275,9 +281,8 @@ TEST_F(SslStreamTest, ReadShutdown) {
     cl_err = RunPeer(client_opts_, shutdown_op_, client_engine_.get(), server_engine_.get());
   });
 
-  server_fb = fibers::fiber([&] {
-    srv_err = RunPeer(srv_opts_, read_op_, server_engine_.get(), client_engine_.get());
-  });
+  server_fb = fibers::fiber(
+      [&] { srv_err = RunPeer(srv_opts_, read_op_, server_engine_.get(), client_engine_.get()); });
 
   server_fb.join();
   client_fb.join();
@@ -308,6 +313,60 @@ TEST_F(SslStreamTest, ReadShutdown) {
   ASSERT_EQ(shutdown_client, shutdown_srv);
 }
 
-}  // namespace tls
+TEST_F(SslStreamTest, Write) {
+  unsigned long cl_err = 0, srv_err = 0;
 
+  auto client_fb = fibers::fiber([&] {
+    cl_err = RunPeer(client_opts_, client_handshake_, client_engine_.get(), server_engine_.get());
+  });
+
+  auto server_fb = fibers::fiber([&] {
+    srv_err = RunPeer(srv_opts_, srv_handshake_, server_engine_.get(), client_engine_.get());
+  });
+
+  client_fb.join();
+  server_fb.join();
+  client_opts_.drain_output = true;
+  for (size_t i = 0; i < 10; ++i) {
+    cl_err = RunPeer(client_opts_, write_op_, client_engine_.get(), server_engine_.get());
+    ASSERT_EQ(0, cl_err);
+  }
+}
+
+void BM_TlsWrite(benchmark::State& state) {
+  unique_ptr<Engine> client_engine, server_engine;
+  SslStreamTest::Options sopts{"srv"}, copts{"client"};
+  auto cl_handshake = [](Engine* eng) { return eng->Handshake(Engine::CLIENT); };
+  auto srv_handshake = [](Engine* eng) { return eng->Handshake(Engine::SERVER); };
+  SSL_CTX* ctx = CreateSslCntx();
+  client_engine.reset(new Engine(ctx));
+  server_engine.reset(new Engine(ctx));
+  SSL_CTX_free(ctx);
+
+  SSL* ssl = server_engine->native_handle();
+  CHECK_EQ(1, SSL_set_dh_auto(ssl, 1));
+
+  auto client_fb = fibers::fiber(
+      [&] { RunPeer(copts, cl_handshake, client_engine.get(), server_engine.get()); });
+
+  auto server_fb = fibers::fiber(
+      [&] { RunPeer(sopts, srv_handshake, server_engine.get(), client_engine.get()); });
+
+  client_fb.join();
+  server_fb.join();
+
+  copts.drain_output = true;
+
+  size_t len = state.range(0);
+  unique_ptr<uint8_t[]> wb(new uint8_t[len]);
+  Engine::Buffer buf{wb.get(), len};
+
+  auto write_cb = [&](Engine* eng) { return eng->Write(buf); };
+  while (state.KeepRunning()) {
+    CHECK_EQ(0u, RunPeer(copts, write_cb, client_engine.get(), server_engine.get()));
+  }
+}
+BENCHMARK(BM_TlsWrite)->Arg(1024)->Arg(4096)->ArgName("bytes");
+
+}  // namespace tls
 }  // namespace util

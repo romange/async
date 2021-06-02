@@ -208,7 +208,7 @@ endif ()
 
 FetchContent_Declare(
   abseil_cpp
-  URL https://github.com/abseil/abseil-cpp/archive/20210324.0.zip
+  URL https://github.com/abseil/abseil-cpp/archive/20210324.2.zip
 )
 FetchContent_GetProperties(abseil_cpp)
 if(NOT abseil_cpp_POPULATED)
