@@ -7,31 +7,10 @@
 #include <absl/types/span.h>
 #include <openssl/ssl.h>
 
-#include <system_error>
-
 #include "base/expected.hpp"
 
 namespace util {
 namespace tls {
-
-class error_category : public std::error_category {
- public:
-  const char* name() const noexcept final {
-    return "async.tls";
-  }
-
-  std::string message(int ev) const final;
-
-  std::error_condition default_error_condition(int ev) const noexcept final;
-
-  bool equivalent(int ev, const std::error_condition& condition) const noexcept final {
-    return condition.value() == ev && &condition.category() == this;
-  }
-
-  bool equivalent(const std::error_code& error, int ev) const noexcept final {
-    return error.value() == ev && &error.category() == this;
-  }
-};
 
 class Engine {
  public:

@@ -16,17 +16,6 @@ namespace util {
 
 namespace tls {
 
-static error_category tls_category;
-
-std::string error_category::message(int ev) const {
-  const char* s = ::ERR_reason_error_string(ev);
-  return s ? s : "undefined";
-}
-
-std::error_condition error_category::default_error_condition(int ev) const noexcept {
-  return std::error_condition{ev, *this};
-}
-
 Engine::Engine(SSL_CTX* context) : ssl_(::SSL_new(context)) {
   CHECK(ssl_);
 
@@ -91,11 +80,16 @@ auto Engine::FetchOutputBuf() -> BufResult {
   return Buffer(reinterpret_cast<const uint8_t*>(buf), res);
 }
 
+
+// TODO: to consider replacing BufResult with Buffer since
+// it seems BIO_nread0 should not return negative values when used properly.
 auto Engine::PeekOutputBuf() -> BufResult {
   char* buf = nullptr;
 
   int res = BIO_nread0(output_bio_, &buf);
   if (res < 0) {
+    LOG(DFATAL) << " Should never happen " << res;
+
     unsigned long error = ::ERR_get_error();
     return nonstd::make_unexpected(error);
   }
