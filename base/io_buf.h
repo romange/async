@@ -1,6 +1,7 @@
 // Copyright 2020, Beeri 15.  All rights reserved.
 // Author: Roman Gershman (romange@gmail.com)
 //
+#pragma once
 
 #include <absl/types/span.h>
 
@@ -41,8 +42,14 @@ class IoBuf {
   Bytes AppendBuf() {
     return Bytes(end_, (buf_.get() + capacity_) - end_);
   }
-  void AppendSize(size_t sz) {
+
+  void CommitWrite(size_t sz) {
     end_ += sz;
+  }
+
+  // Deprecated.
+  void AppendSize(size_t sz) {
+    CommitWrite(sz);
   }
 
  private:

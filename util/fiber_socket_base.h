@@ -39,6 +39,8 @@ class FiberSocketBase : public SyncStreamInterface {
 
   ABSL_MUST_USE_RESULT virtual error_code Close() = 0;
 
+  virtual bool IsOpen() const = 0;
+
   expected_size_t virtual RecvMsg(const msghdr& msg, int flags) = 0;
 
   using SyncStreamInterface::Send;
@@ -98,7 +100,7 @@ class LinuxSocketBase : public FiberSocketBase {
 
   //! IsOpen does not promise that the socket is TCP connected or live,
   // just that the file descriptor is valid and its state is open.
-  bool IsOpen() const {
+  bool IsOpen() const final {
     return fd_ >= 0 && (fd_ & IS_SHUTDOWN) == 0;
   }
 

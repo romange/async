@@ -16,6 +16,8 @@ class Engine;
 
 class TlsSocket : public FiberSocketBase {
  public:
+  //! Does not take ownership over next. 'next' must be live as long as we use
+  //! TlsSocket instance.
   TlsSocket(FiberSocketBase* next = nullptr);
 
   ~TlsSocket();
@@ -29,6 +31,10 @@ class TlsSocket : public FiberSocketBase {
   error_code Connect(const endpoint_type& ep) final;
 
   error_code Close() final;
+
+  bool IsOpen() const final {
+    return next_sock_->IsOpen();
+  }
 
   expected_size_t RecvMsg(const msghdr& msg, int flags) final;
 

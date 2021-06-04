@@ -57,8 +57,6 @@ inline error_code SSL2Error(unsigned long err) {
 
 }  // namespace
 
-static TlsSocket socket;
-
 TlsSocket::TlsSocket(FiberSocketBase* next)
     : FiberSocketBase(next ? next->proactor() : nullptr), next_sock_(next) {
 }
