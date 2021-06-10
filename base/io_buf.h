@@ -72,7 +72,7 @@ inline void IoBuf::ConsumeInput(size_t offs) {
 
   size_t av = InputBytes();
   if (av <= 16U && ReadPos() > 16U) {
-    memcpy(buf_.get(), next_, end_ - next_);
+    memcpy(buf_.get(), next_, av);
     next_ = buf_.get();
     end_ = next_ + av;
   }

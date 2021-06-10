@@ -33,7 +33,6 @@ signal_state* get_signal_state() {
 }
 
 void SigAction(int signal, siginfo_t*, void*) {
-  SIGINT;
   signal_state* state = get_signal_state();
   DCHECK_LT(signal, _NSIG);
 
