@@ -134,12 +134,14 @@ void Proactor::Run() {
     ++loop_cnt;
 
     int num_submitted = io_uring_submit(&ring_);
+    bool ring_busy = false;
 
     if (num_submitted >= 0) {
       if (num_submitted)
         DVLOG(2) << "Submitted " << num_submitted;
     } else if (num_submitted == -EBUSY) {
-      VLOG(1) << "EBUSY " << num_submitted;
+      VLOG(2) << "EBUSY " << io_uring_sq_ready(&ring_);
+      ring_busy = true;
       num_submitted = 0;
     } else {
       URING_CHECK(num_submitted);
@@ -213,8 +215,7 @@ void Proactor::Run() {
       continue;
     }
 
-    if (cqe_count || io_uring_sq_ready(&ring_) || !task_queue_.empty()) {
-      spin_loops = 0;
+    if (cqe_count || !task_queue_.empty()) {
       continue;
     }
 
@@ -249,7 +250,7 @@ void Proactor::Run() {
     }
 
     // Lets spin a bit to make a system a bit more responsive.
-    if (++spin_loops < kSpinLimit) {
+    if (!ring_busy && ++spin_loops < kSpinLimit) {
       DVLOG(3) << "spin_loops " << spin_loops;
       // We should not spin too much using sched_yield or it burns a fuckload of cpu.
       continue;

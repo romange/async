@@ -3,9 +3,9 @@
 //
 #pragma once
 
+#include <absl/types/optional.h>
 #include <boost/fiber/channel_op_status.hpp>
 #include <boost/fiber/condition_variable.hpp>
-#include <experimental/optional>
 #include <ostream>
 
 #include "util/fibers/event_count.h"
@@ -224,7 +224,7 @@ template <typename Pred> void Await(::boost::fibers::condition_variable_any& cv,
 // Therefore, for single producer, single consumer single threaded case we can use this
 // Cell class for emulating unbufferred_channel.
 template <typename T> class Cell {
-  std::experimental::optional<T> val_;
+  absl::optional<T> val_;
   ::boost::fibers::condition_variable_any cv_;
 
  public:
@@ -248,7 +248,7 @@ template <typename T> class Cell {
   }
 
   void Clear() {
-    val_ = std::experimental::nullopt;
+    val_ = absl::nullopt;
     cv_.notify_one();
   }
 };
