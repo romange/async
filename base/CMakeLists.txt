@@ -1,8 +1,8 @@
-add_library(base arena.cc bits.cc dash.cc hash.cc histogram.cc init.cc logging.cc proc_util.cc
+add_library(base arena.cc bits.cc hash.cc histogram.cc init.cc logging.cc proc_util.cc
             pthread_utils.cc varz_node.cc cuckoo_map.cc)
 
 cxx_link(base glog::glog gflags::gflags atomic rt # rt for timer_create etc.
-         absl::strings absl::symbolize absl::failure_signal_handler TRDP::pmr TRDP::xxhash)
+         absl::strings absl::symbolize absl::failure_signal_handler TRDP::xxhash)
 
 # Define default gtest_main for tests.
 add_library(gtest_main_ext gtest_main.cc)
@@ -17,5 +17,3 @@ cxx_test(pod_array_test base LABELS CI)
 cxx_test(cuckoo_map_test base absl::flat_hash_map LABELS CI)
 cxx_test(histogram_test base LABELS CI)
 cxx_test(malloc_test base TRDP::mimalloc TRDP::jemalloc)
-cxx_test(dash_test base redis_dict LABELS CI)
-
