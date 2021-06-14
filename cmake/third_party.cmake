@@ -182,7 +182,7 @@ endif()
 
 FetchContent_Declare(
   gtest
-  URL https://github.com/google/googletest/archive/release-1.10.0.zip
+  URL https://github.com/google/googletest/archive/release-1.11.0.zip
 )
 
 FetchContent_GetProperties(gtest)
@@ -193,7 +193,7 @@ endif ()
 
 FetchContent_Declare(
   benchmark
-  URL https://github.com/google/benchmark/archive/v1.5.2.zip
+  URL https://github.com/google/benchmark/archive/v1.5.5.zip
 )
 
 FetchContent_GetProperties(benchmark)
