@@ -97,6 +97,24 @@ class WriteFile {
   const std::string create_file_name_;
 };
 
+class StringFile : public WriteFile {
+ public:
+  std::string val;
+
+  StringFile() : WriteFile(std::string{}) {
+  }
+
+  std::error_code Close() final {
+    return std::error_code{};
+  }
+
+  std::error_code Write(const uint8* buffer, uint64 length) final {
+    val.append(reinterpret_cast<const char*>(buffer), length);
+    return std::error_code{};
+  }
+};
+
+
 //! Deletes the file returning true iff successful.
 bool Delete(absl::string_view name);
 

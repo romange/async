@@ -29,7 +29,18 @@ class MallocTest : public testing::Test {
 
 TEST_F(MallocTest, Basic) {
   EXPECT_EQ(32, mi_good_size(24));
+
+  // when jemalloc is configured --with-lg-quantum=3 it produces tight allocations.
   EXPECT_EQ(32, je_nallocx(24, 0));
+
+  EXPECT_EQ(8, mi_good_size(5));
+  EXPECT_EQ(8, je_nallocx(5, 0));
+
+  EXPECT_EQ(16384, mi_good_size(16136));
+  EXPECT_EQ(16384, mi_good_size(15240));
+  EXPECT_EQ(14336, mi_good_size(13064));
+  EXPECT_EQ(20480, mi_good_size(17288));
+  EXPECT_EQ(32768, mi_good_size(28816));
 }
 
 }  // namespace base
