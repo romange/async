@@ -6,75 +6,68 @@
 #include <absl/types/span.h>
 
 #include <cstring>
-#include <memory>
 
+#include "base/pod_array.h"
 namespace base {
 
 class IoBuf {
  public:
   using Bytes = absl::Span<uint8_t>;
 
-  explicit IoBuf(size_t capacity) : buf_(new uint8_t[capacity]), capacity_(capacity) {
-    next_ = end_ = buf_.get();
+  explicit IoBuf(size_t capacity = 256)  {
+    buf_.reserve(capacity);
   }
 
-  uint8_t* Input() {
-    return next_;
-  }
   size_t Capacity() const {
-    return capacity_;
+    return buf_.capacity();
   }
 
-  size_t InputBytes() const {
-    return end_ - next_;
+  Bytes InputBuffer() {
+    return Bytes{buf_.begin() + offs_, InputLen()};
   }
-  bool Empty() const {
-    return end_ == next_;
-  }
+
+  size_t InputLen() const { return buf_.size() - offs_; }
 
   void ConsumeInput(size_t offs);
 
-  void CopyAndConsume(size_t sz, void* dest) {
-    memcpy(dest, Input(), sz);
+  void ReadAndConsume(size_t sz, void* dest) {
+    Bytes b = InputBuffer();
+    assert(b.size() >= sz);
+    memcpy(dest, b.data(), sz);
     ConsumeInput(sz);
   }
 
-  Bytes AppendBuf() {
-    return Bytes(end_, (buf_.get() + capacity_) - end_);
+  Bytes AppendBuffer() {
+    return Bytes{buf_.end(), Available()};
   }
 
   void CommitWrite(size_t sz) {
-    end_ += sz;
+     buf_.resize_assume_reserved(buf_.size() + sz);
   }
 
-  // Deprecated.
-  void AppendSize(size_t sz) {
-    CommitWrite(sz);
+  void Reserve(size_t sz) {
+    buf_.reserve(sz);
   }
 
  private:
-  size_t ReadPos() const {
-    return next_ - buf_.get();
+  size_t Available() const {
+    return buf_.capacity() - buf_.size();
   }
 
-  std::unique_ptr<uint8_t[]> buf_;
-  size_t capacity_ = 0;
-  uint8_t* next_;
-  uint8_t* end_;
+  base::PODArray<uint8_t, 8> buf_;
+  size_t offs_ = 0;
 };
 
-inline void IoBuf::ConsumeInput(size_t offs) {
-  next_ += offs;
-  if (Empty()) {
-    next_ = end_ = buf_.get();
-    return;
-  }
-
-  size_t av = InputBytes();
-  if (av <= 16U && ReadPos() > 16U) {
-    memcpy(buf_.get(), next_, av);
-    next_ = buf_.get();
-    end_ = next_ + av;
+inline void IoBuf::ConsumeInput(size_t sz) {
+  if (offs_ + sz >= buf_.size()) {
+    buf_.clear();
+  } else {
+    offs_ += sz;
+    if (2 * offs_ > buf_.size() && buf_.size() - offs_ < 512) {
+      memcpy(buf_.data(), buf_.data() + offs_, buf_.size() - offs_);
+      buf_.resize(buf_.size() - offs_);
+      offs_ = 0;
+    }
   }
 }
 
