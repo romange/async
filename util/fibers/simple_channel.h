@@ -54,7 +54,7 @@ template <typename T, typename Queue = folly::ProducerConsumerQueue<T>> class Si
   //! Non blocking push.
   template <typename... Args> bool TryPush(Args&&... args) noexcept {
     if (QTraits::TryEnqueue(q_, std::forward<Args>(args)...)) {
-      if (++throttled_pushes_ > q_.capacity() / 3) {
+      if (true /* ++throttled_pushes_ > q_.capacity() / 3*/) {
         pop_ec_.notify();
         throttled_pushes_ = 0;
       }

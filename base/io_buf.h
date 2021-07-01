@@ -61,6 +61,7 @@ class IoBuf {
 inline void IoBuf::ConsumeInput(size_t sz) {
   if (offs_ + sz >= buf_.size()) {
     buf_.clear();
+    offs_ = 0;
   } else {
     offs_ += sz;
     if (2 * offs_ > buf_.size() && buf_.size() - offs_ < 512) {
