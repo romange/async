@@ -3,9 +3,11 @@
 //
 #include "base/hash.h"
 
+#include <absl/random/random.h>
 #include "base/gtest.h"
 #include "base/logging.h"
 #include "base/aquahash.h"
+#include "base/zipf_gen.h"
 
 using namespace std;
 
@@ -26,5 +28,13 @@ TEST_F(HashTest, Basic) {
   EXPECT_NE(0, val);
 }
 
+TEST_F(HashTest, Zipf) {
+  ZipfianGenerator zipf(0, 9, 0.99);
+  absl::BitGen gen;
+
+  for (unsigned i = 0; i < 100; ++i) {
+    LOG(INFO) << zipf.Next(gen);
+  }
+}
 
 }  // namespace base
