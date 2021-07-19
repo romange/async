@@ -2,8 +2,11 @@
 // Author: Roman Gershman (romange@gmail.com)
 //
 
+#include <absl/strings/ascii.h>
+
 #include "base/init.h"
-#include "examples/pingserver/ping_command.h"
+#include "base/io_buf.h"
+#include "examples/pingserver/resp_parser.h"
 #include "util/accept_server.h"
 #include "util/asio_stream_adapter.h"
 #include "util/http_handler.h"
@@ -19,7 +22,7 @@ using uring::FiberSocket;
 using uring::Proactor;
 using uring::SubmitEntry;
 using uring::UringPool;
-
+using redis::RespParser;
 using IoResult = Proactor::IoResult;
 
 DEFINE_int32(http_port, 8080, "Http port.");
@@ -34,6 +37,18 @@ DEFINE_string(tls_key, "", "");
 
 VarzQps ping_qps("ping-qps");
 
+
+inline void ToUpper(const RespParser::Buffer* val) {
+  for (auto& c : *val) {
+    c = absl::ascii_toupper(c);
+  }
+}
+
+static inline absl::string_view ToAbsl(const absl::Span<uint8_t>& s) {
+  return absl::string_view{reinterpret_cast<char*>(s.data()), s.size()};
+}
+
+
 class PingConnection : public Connection {
  public:
   PingConnection(SSL_CTX* ctx) : ctx_(ctx) {
@@ -47,7 +62,6 @@ class PingConnection : public Connection {
   void HandleRequests() final;
 
   SSL_CTX* ctx_ = nullptr;
-  PingCommand cmd_;
 };
 
 void PingConnection::HandleRequests() {
@@ -68,22 +82,48 @@ void PingConnection::HandleRequests() {
   FiberSocketBase* peer = tls_sock ? (FiberSocketBase*)tls_sock.get() : socket_.get();
 
   AsioStreamAdapter<FiberSocketBase> asa(*peer);
+  base::IoBuf io_buf{1024};
+  RespParser resp_parser;
+  uint32_t consumed = 0;
+  std::vector<RespParser::Buffer> args;
   while (true) {
-    size_t res = asa.read_some(cmd_.read_buffer(), ec);
+    auto dest = io_buf.AppendBuffer();
+    asio::mutable_buffer mb(dest.data(), dest.size());
+    size_t res = asa.read_some(mb, ec);
     if (FiberSocket::IsConnClosed(ec))
       break;
 
     CHECK(!ec) << ec << "/" << ec.message();
     VLOG(1) << "Read " << res << " bytes";
+    io_buf.CommitWrite(res);
+    RespParser::Status st = resp_parser.Parse(io_buf.InputBuffer(), &consumed, &args);
+    io_buf.ConsumeInput(consumed);
 
-    if (cmd_.Decode(res)) {  // The flow has a bug in case of pipelined requests.
-      ping_qps.Inc();
-      const char* str = reinterpret_cast<const char*>(cmd_.reply().data());
-      VLOG(1) << "Writing " << absl::string_view(str, cmd_.reply().size());
-      asa.write_some(cmd_.reply(), ec);
-      if (ec) {
-        break;
+    if (st == RespParser::RESP_OK) {
+      if (args.empty())
+        continue;
+      ToUpper(&args[0]);
+      absl::string_view cmd = ToAbsl(args.front());
+      if (cmd == "PING") {
+        ping_qps.Inc();
+        const char kReply[] = "+PONG\r\n";
+        auto b = boost::asio::buffer(kReply, sizeof(kReply) - 1);
+        asa.write_some(b, ec);
+        if (ec) {
+          break;
+        }
+      } else {
+        const char kReply[] = "+OK\r\n";
+        auto b = boost::asio::buffer(kReply, sizeof(kReply) - 1);
+        asa.write_some(b, ec);
+        if (ec) {
+          break;
+        }
       }
+    } else if (st == RespParser::MORE_INPUT) {
+      continue;
+    } else {
+      break;
     }
   }
 
